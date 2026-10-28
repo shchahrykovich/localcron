@@ -78,6 +78,39 @@ fn next_status_config_and_not_running() {
 }
 
 #[test]
+fn pause_resume_and_kill() {
+    let d = Daemon::start();
+    let (ok, out, err, _) = d.cli(&["pause"]);
+    assert!(ok && out.contains("Paused"), "{out}{err}");
+    let (_, out, _, _) = d.cli(&["status"]);
+    assert!(out.contains("paused: scheduled runs do not start"), "{out}");
+    let (_, out, _, _) = d.cli(&["config"]);
+    assert!(out.contains("paused: true"), "{out}");
+
+    // A run someone asks for still starts while paused.
+    d.cli(&["add", "stuck", "--schedule", "@daily", "--command", "trap '' TERM; sleep 30"]);
+    let (_, out, _, _) = d.cli(&["run", "stuck"]);
+    let run_id = out.split_whitespace().next().unwrap().to_string();
+    let start = std::time::Instant::now();
+    while !d.cli(&["runs", "stuck"]).1.contains("running") {
+        assert!(start.elapsed().as_secs() < 10, "the run did not start");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    let (ok, out, _, _) = d.cli(&["cancel", &run_id, "--kill"]);
+    assert!(ok && out.contains(&format!("Killing {run_id}")), "{out}");
+    while !d.cli(&["runs", "stuck"]).1.contains("killed") {
+        assert!(start.elapsed().as_secs() < 8, "the run was not killed at once");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    let (ok, out, _, _) = d.cli(&["resume"]);
+    assert!(ok && out.contains("Resumed"), "{out}");
+    let (_, out, _, _) = d.cli(&["status"]);
+    assert!(!out.contains("paused"), "{out}");
+}
+
+#[test]
 fn the_note_names_this_instance() {
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_localcron")).arg("note").output().unwrap();
     let text = String::from_utf8_lossy(&out.stdout);

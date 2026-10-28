@@ -1,0 +1,9 @@
+{
+  "id": 1,
+  "result": {
+    "keep_runs": 20,
+    "max_concurrent": 2,
+    "paused": false,
+    "resumed_at": "2026-10-28T12:15:00Z"
+  }
+}

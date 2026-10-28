@@ -51,7 +51,7 @@ final class ApiContractTests: XCTestCase {
         case "get_job", "remove_job", "run_job": try check(IdParams.self, json, file, exact: true)
         case "set_job": try check(SetJobParams.self, json, file, exact: false)
         case "set_job_enabled": try check(SetJobEnabledParams.self, json, file, exact: true)
-        case "cancel_run": try check(RunIdParams.self, json, file, exact: true)
+        case "cancel_run": try check(CancelRunParams.self, json, file, exact: true)
         case "list_runs": try check(ListRunsParams.self, json, file, exact: true)
         case "get_run_log": try check(GetRunLogParams.self, json, file, exact: true)
         case "preview_schedule": try check(PreviewScheduleParams.self, json, file, exact: true)

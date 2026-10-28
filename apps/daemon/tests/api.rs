@@ -29,7 +29,8 @@ impl Daemon {
             .spawn()
             .unwrap();
         let d = Daemon { child, home };
-        wait_for(|| d.socket().exists(), "the socket");
+        // Not only the file: bind() makes it before listen() accepts connections.
+        wait_for(|| UnixStream::connect(d.socket()).is_ok(), "the socket");
         d
     }
 
@@ -179,6 +180,81 @@ fn cancel_stops_the_whole_process_group() {
     assert_eq!(done["message"], "canceled");
     std::thread::sleep(Duration::from_millis(3500));
     assert!(!marker.exists(), "the child kept running after cancel");
+}
+
+#[test]
+fn force_kills_a_run_that_ignores_sigterm() {
+    let d = Daemon::start();
+    // An ignored signal stays ignored in the children, so sleep ignores it too.
+    d.ok("set_job", json!({"job": d.shell_job("stubborn", "trap '' TERM; sleep 30")}));
+    let run = d.ok("run_job", json!({"id": "stubborn"}))["run"]["id"].as_str().unwrap().to_string();
+    wait_for(|| d.run(&run)["pid"].is_number(), "the pid");
+    assert_eq!(d.ok("cancel_run", json!({"run_id": run}))["canceled"], true);
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(d.run(&run)["status"], "running", "SIGTERM is ignored, so the run waits for SIGKILL");
+
+    let start = Instant::now();
+    let reply = d.ok("cancel_run", json!({"run_id": run, "force": true}));
+    assert_eq!(reply["canceled"], true);
+    let done = d.wait_status(&run, "canceled");
+    assert!(start.elapsed() < Duration::from_secs(5), "force waited for the grace time: {:?}", start.elapsed());
+    assert_eq!(done["message"], "killed");
+    assert_eq!(d.ok("cancel_run", json!({"run_id": run, "force": true}))["canceled"], false);
+}
+
+/// Two jobs due every minute, saved an hour ago: both are caught up at start.
+fn write_missed_jobs(home: &Path, command: &str, config: Value) {
+    let dir = home.to_string_lossy().into_owned();
+    let updated = (chrono::Local::now() - chrono::Duration::hours(1)).fixed_offset().to_rfc3339();
+    let job = |id: &str| json!({"id": id, "schedule": "* * * * *", "kind": "shell", "command": command, "dir": dir, "updated_at": updated});
+    std::fs::write(home.join("jobs.json"), json!({"version": 1, "jobs": [job("a"), job("b")]}).to_string()).unwrap();
+    std::fs::write(home.join("config.json"), config.to_string()).unwrap();
+}
+
+#[test]
+fn a_paused_daemon_starts_no_scheduled_run_and_resume_does_not_catch_up() {
+    let home = tempfile::tempdir().unwrap();
+    write_missed_jobs(home.path(), "true", json!({"paused": true}));
+    let d = Daemon::start_in(home);
+    assert_eq!(d.ok("status", json!({}))["paused"], true);
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(d.ok("list_runs", json!({}))["runs"], json!([]), "a scheduled run started while paused");
+
+    // A run someone asks for still starts.
+    let manual = d.ok("run_job", json!({"id": "a"}))["run"]["id"].as_str().unwrap().to_string();
+    d.wait_status(&manual, "succeeded");
+
+    let config = d.ok("set_config", json!({"paused": false}));
+    assert_eq!(config["paused"], false);
+    assert!(config["resumed_at"].is_string(), "{config}");
+    assert_eq!(d.ok("status", json!({}))["paused"], false);
+    std::thread::sleep(Duration::from_millis(500));
+    let runs = d.ok("list_runs", json!({}))["runs"].as_array().unwrap().clone();
+    assert!(runs.iter().all(|r| r["trigger"] != "catch_up"), "a time missed while paused was caught up: {runs:?}");
+
+    // Not after a restart either.
+    let d = Daemon::start_in(d.stop());
+    std::thread::sleep(Duration::from_millis(500));
+    let runs = d.ok("list_runs", json!({}))["runs"].as_array().unwrap().clone();
+    assert!(runs.iter().all(|r| r["trigger"] != "catch_up"), "caught up after a restart: {runs:?}");
+}
+
+#[test]
+fn pausing_cancels_queued_scheduled_runs_and_keeps_the_running_one() {
+    let home = tempfile::tempdir().unwrap();
+    write_missed_jobs(home.path(), "sleep 2", json!({"max_concurrent": 1}));
+    let d = Daemon::start_in(home);
+    wait_for(|| d.ok("status", json!({}))["queued"] == 1, "a queued catch-up run");
+    let runs = d.ok("list_runs", json!({}))["runs"].as_array().unwrap().clone();
+    let id_of = |status: &str| runs.iter().find(|r| r["status"] == status).unwrap()["id"].as_str().unwrap().to_string();
+    let (running, queued) = (id_of("running"), id_of("queued"));
+
+    assert_eq!(d.ok("set_config", json!({"paused": true}))["paused"], true);
+    let canceled = d.run(&queued);
+    assert_eq!(canceled["status"], "canceled");
+    assert_eq!(canceled["message"], "LocalCron was paused");
+    assert_eq!(d.run(&running)["status"], "running");
+    d.wait_status(&running, "succeeded");
 }
 
 #[test]

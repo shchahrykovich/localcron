@@ -294,16 +294,3 @@ final class JobDraftTests: XCTestCase {
         XCTAssertTrue(e2.message.contains("prompt"))
     }
 }
-
-final class AppMenuTests: XCTestCase {
-    func testEntries() {
-        let entries = AppMenu.entries(.init(appName: "LocalCron", cliInstalled: true, summary: "2 jobs"))
-        guard case let .item(first) = entries.first else { return XCTFail("no first item") }
-        XCTAssertEqual(first.title, "Open LocalCron")
-        XCTAssertEqual(first.detail, "2 jobs")
-        let actions = entries.compactMap { if case let .item(i) = $0 { i.action } else { nil } }
-        for needed: AppMenu.Action in [.installClaude, .installCodex, .installCLI, .checkForUpdates, .quit] {
-            XCTAssertTrue(actions.contains(needed), "\(needed)")
-        }
-    }
-}

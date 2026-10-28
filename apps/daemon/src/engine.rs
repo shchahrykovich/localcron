@@ -136,7 +136,7 @@ impl Engine {
                 }
             };
             let last_due = runs_file.runs.iter().filter(|r| r.job_id == job.id).filter_map(|r| r.due_at).max();
-            let next_due = first_due(&job, &schedule, last_due, local_now);
+            let next_due = first_due(&job, &schedule, last_due.max(config.resumed_at), local_now);
             jobs.insert(job.id.clone(), Slot { job, schedule, next_due });
         }
         let next_seq = runs_file.next_seq.max(1);
@@ -191,6 +191,7 @@ impl Engine {
     fn tick(self: &Arc<Self>, st: &mut State) -> Duration {
         let local_now = Local::now();
         let mut jobs_changed = false;
+        let paused = st.config.paused;
         let due: Vec<(String, DateTime<Local>)> = st
             .jobs
             .values()
@@ -204,6 +205,12 @@ impl Engine {
             if slot.schedule.is_once() {
                 slot.job.enabled = false;
                 jobs_changed = true;
+            }
+            if paused {
+                if slot.schedule.is_once() {
+                    log!("job {id}: missed {due_at}, LocalCron is paused");
+                }
+                continue;
             }
             if late && !slot.job.catch_up {
                 log!("job {id}: missed {due_at}, catch_up is off");
@@ -539,6 +546,7 @@ impl Engine {
             running: st.running.len(),
             queued: st.queue.len(),
             max_concurrent: st.config.max_concurrent,
+            paused: st.config.paused,
             next,
             data_dir: self.paths.data.to_string_lossy().into_owned(),
             logs_dir: self.paths.logs.to_string_lossy().into_owned(),
@@ -601,11 +609,11 @@ impl Engine {
         let queued: Vec<String> =
             st.runs.iter().filter(|r| r.job_id == id && r.status == RunStatus::Queued).map(|r| r.id.clone()).collect();
         for run_id in queued {
-            Self::cancel_locked(&mut st, &run_id, "the job was removed");
+            Self::cancel_locked(&mut st, &run_id, "the job was removed", false);
         }
         let running: Vec<String> = st.running.keys().filter(|r| run_job_id(r) == id).cloned().collect();
         for run_id in running {
-            Self::cancel_locked(&mut st, &run_id, "the job was removed");
+            Self::cancel_locked(&mut st, &run_id, "the job was removed", false);
         }
         self.forget_job_runs(&mut st, id);
         self.save_runs(&st);
@@ -649,17 +657,30 @@ impl Engine {
     }
 
     /// A queued run is removed from the queue; a running one gets SIGTERM
-    /// from the scheduler, then SIGKILL.
-    fn cancel_locked(st: &mut State, run_id: &str, why: &str) -> bool {
+    /// from the scheduler, then SIGKILL. With `force` the scheduler sends
+    /// SIGKILL at once, also to a run that is already stopping.
+    fn cancel_locked(st: &mut State, run_id: &str, why: &str, force: bool) -> bool {
         if let Some(active) = st.running.get_mut(run_id) {
-            if active.stop.is_none() {
-                active.stop = Some((RunStatus::Canceled, None));
-                if let Some(run) = st.runs.iter_mut().find(|r| r.id == run_id) {
-                    run.message = why.into();
+            let changed = match active.stop {
+                None if force => {
+                    active.stop = Some((RunStatus::Canceled, Some(grace_over())));
+                    true
                 }
-                return true;
+                None => {
+                    active.stop = Some((RunStatus::Canceled, None));
+                    true
+                }
+                // A timed-out run stays timed out; it is only killed sooner.
+                Some((status, _)) if force && !active.killed => {
+                    active.stop = Some((status, Some(grace_over())));
+                    true
+                }
+                Some(_) => false,
+            };
+            if changed && let Some(run) = st.runs.iter_mut().find(|r| r.id == run_id) {
+                run.message = why.into();
             }
-            return false;
+            return changed;
         }
         if let Some(pos) = st.queue.iter().position(|r| r == run_id) {
             st.queue.remove(pos);
@@ -673,14 +694,14 @@ impl Engine {
         false
     }
 
-    pub fn cancel_run(&self, run_id: &str) -> ApiResult<CancelRunResult> {
+    pub fn cancel_run(&self, run_id: &str, force: bool) -> ApiResult<CancelRunResult> {
         let mut st = self.lock();
         if !st.runs.iter().any(|r| r.id == run_id) {
             return Err(ApiError::new(ErrorCode::NotFound, format!("no run {run_id:?}")));
         }
-        let canceled = Self::cancel_locked(&mut st, run_id, "canceled");
+        let canceled = Self::cancel_locked(&mut st, run_id, if force { "killed" } else { "canceled" }, force);
         if canceled {
-            log!("run {run_id}: cancel");
+            log!("run {run_id}: {}", if force { "kill" } else { "cancel" });
             self.save_runs(&st);
         }
         let run = st.runs.iter().find(|r| r.id == run_id).cloned().expect("checked above");
@@ -742,9 +763,40 @@ impl Engine {
         if let Some(n) = params.keep_runs {
             config.keep_runs = n;
         }
+        let was_paused = st.config.paused;
+        if let Some(paused) = params.paused {
+            config.paused = paused;
+            if was_paused && !paused {
+                config.resumed_at = Some(now());
+            }
+        }
         config.validate().map_err(invalid)?;
         store::save(&self.paths.config(), &config).map_err(|e| internal(format!("cannot save the config: {e}")))?;
         st.config = config.clone();
+        match (was_paused, config.paused) {
+            (false, true) => {
+                let queued: Vec<String> = st
+                    .runs
+                    .iter()
+                    .filter(|r| r.status == RunStatus::Queued && r.trigger != Trigger::Manual)
+                    .map(|r| r.id.clone())
+                    .collect();
+                for run_id in &queued {
+                    Self::cancel_locked(&mut st, run_id, "LocalCron was paused", false);
+                }
+                self.save_runs(&st);
+                log!("paused; {} queued runs canceled", queued.len());
+            }
+            (true, false) => {
+                // Times that passed while paused are not caught up.
+                let local_now = Local::now();
+                for slot in st.jobs.values_mut() {
+                    slot.next_due = slot.schedule.next_after(&local_now);
+                }
+                log!("resumed");
+            }
+            _ => {}
+        }
         drop(st);
         self.notify();
         Ok(config)
@@ -761,6 +813,12 @@ fn first_due(job: &Job, schedule: &Schedule, last_due: Option<DateTime<FixedOffs
         Some(t) if t <= now && !job.catch_up => schedule.next_after(&now),
         other => other,
     }
+}
+
+/// A SIGTERM time so old that the scheduler sends SIGKILL at its next look.
+fn grace_over() -> Instant {
+    let now = Instant::now();
+    now.checked_sub(KILL_GRACE).unwrap_or(now)
 }
 
 /// `weekly-review.12` belongs to `weekly-review`.
@@ -835,6 +893,15 @@ mod tests {
         let (j, s) = job("0 9 * * wed", true, &local("2026-10-01 10:00").fixed_offset().to_rfc3339());
         let last = Some(local("2026-10-28 09:00").fixed_offset());
         let due = first_due(&j, &s, last, local("2026-10-29 12:00")).unwrap();
+        assert_eq!(due, local("2026-11-04 09:00"));
+    }
+
+    #[test]
+    fn a_time_missed_while_paused_is_not_caught_up() {
+        let (j, s) = job("0 9 * * wed", true, &local("2026-10-26 10:00").fixed_offset().to_rfc3339());
+        // Paused over Wednesday 09:00, resumed Thursday 08:00.
+        let resumed = Some(local("2026-10-29 08:00").fixed_offset());
+        let due = first_due(&j, &s, resumed, local("2026-10-29 12:00")).unwrap();
         assert_eq!(due, local("2026-11-04 09:00"));
     }
 

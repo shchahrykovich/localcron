@@ -9,7 +9,8 @@ import SwiftUI
 @MainActor
 final class StatusItemController: NSObject, NSPopoverDelegate {
     private unowned let model: AppModel
-    private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+    /// Variable: the pause and warning badges make the icon wider.
+    private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let popover = NSPopover()
     /// When the popover last closed. A click on the icon first closes the
     /// popover, then reaches `clicked`; without this check the same click
@@ -35,8 +36,6 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             button.target = self
             button.action = #selector(clicked)
             button.sendAction(on: [.leftMouseDown, .rightMouseDown])
-            let name = Instance.current.appName
-            button.toolTip = BuildKind.current == .dev ? "\(name) (development build)" : name
         }
         trackIcon()
     }
@@ -47,18 +46,63 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     /// Redraw the icon whenever the daemon state changes.
     private func trackIcon() {
         withObservationTracking {
-            let name = !model.running ? "clock.badge.exclamationmark" : model.anyRunActive ? "clock.arrow.circlepath" : "clock"
-            var image = NSImage(systemSymbolName: name, accessibilityDescription: Instance.current.appName)
-            // The status bar ignores contentTintColor, so the color is drawn
-            // into the image, which then must not be a template.
-            if isDev {
-                image = image?.withSymbolConfiguration(.init(paletteColors: [.systemOrange]))
-                image?.isTemplate = false
-            }
-            item.button?.image = image
+            let icon = model.statusIcon
+            let name = BuildKind.current == .dev ? "\(Instance.current.appName) (development build)" : Instance.current.appName
+            item.button?.image = image(for: icon)
+            item.button?.toolTip = icon.toolTip(appName: name)
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in self?.trackIcon() }
         }
+    }
+
+    /// The clock, then a column: the warning triangle at the top, the pause
+    /// sign at the bottom.
+    private func image(for icon: StatusIcon) -> NSImage? {
+        let name = Instance.current.appName
+        // The status bar ignores contentTintColor, so a color is drawn into
+        // the image, which then must not be a template.
+        let colored = isDev || icon.warning
+        let tint = NSImage.SymbolConfiguration(paletteColors: [isDev ? .systemOrange : Self.menuBarText])
+        // withSymbolConfiguration replaces the configuration: size and color
+        // go in one.
+        func symbol(_ symbolName: String, _ config: NSImage.SymbolConfiguration) -> NSImage? {
+            NSImage(systemSymbolName: symbolName, accessibilityDescription: name)?
+                .withSymbolConfiguration(colored ? config.applying(tint) : config)
+        }
+        guard let clock = symbol(icon.symbol, .init(pointSize: 14, weight: .regular)) else { return nil }
+        let badge = NSImage.SymbolConfiguration(pointSize: 7, weight: .bold)
+        let pause = icon.paused ? symbol("pause.fill", badge) : nil
+        let warning = icon.warning
+            ? NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: nil)?
+                .withSymbolConfiguration(badge.applying(.init(paletteColors: [.black, .systemYellow])))
+            : nil
+        if warning == nil && pause == nil {
+            clock.isTemplate = !colored
+            return clock
+        }
+        let column = max(warning?.size.width ?? 0, pause?.size.width ?? 0)
+        let size = NSSize(width: (clock.size.width + 1 + column).rounded(.up), height: max(clock.size.height, 16))
+        let image = NSImage(size: size, flipped: false) { rect in
+            clock.draw(in: NSRect(origin: NSPoint(x: 0, y: (rect.height - clock.size.height) / 2), size: clock.size))
+            let x = clock.size.width + 1
+            if let warning {
+                warning.draw(in: NSRect(origin: NSPoint(x: x + (column - warning.size.width) / 2, y: rect.height - warning.size.height),
+                                        size: warning.size))
+            }
+            if let pause {
+                pause.draw(in: NSRect(origin: NSPoint(x: x + (column - pause.size.width) / 2, y: 0), size: pause.size))
+            }
+            return true
+        }
+        image.isTemplate = !colored
+        image.accessibilityDescription = icon.toolTip(appName: name)
+        return image
+    }
+
+    /// Black on a light menu bar, white on a dark one, as a template image
+    /// would be.
+    private static let menuBarText = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .white : .black
     }
 
     @objc private func clicked() {
@@ -152,6 +196,17 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             DispatchQueue.main.async { self.showWindow() }
         case .newJob:
             model.newJob()
+            DispatchQueue.main.async { self.showWindow() }
+        case let .setPaused(paused):
+            Task { @MainActor in await model.setPaused(paused) }
+        case let .stopRun(runID):
+            if let run = model.activeRuns.first(where: { $0.id == runID }) {
+                Task { @MainActor in await model.cancel(run) }
+            }
+        case .stopAllRuns:
+            Task { @MainActor in await model.stopAll() }
+        case let .showLog(runID):
+            model.showLog(runID: runID)
             DispatchQueue.main.async { self.showWindow() }
         case .settings:
             model.page = .tabs

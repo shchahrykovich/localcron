@@ -7,7 +7,7 @@
 
 import Foundation
 
-public let apiVersion = "1.0"
+public let apiVersion = "1.1"
 
 public func apiMajor(_ version: String) -> Int? {
     version.split(separator: ".").first.flatMap { Int($0) }
@@ -259,6 +259,9 @@ public enum RunStatus: String, Codable, Sendable {
 
     public var isFinished: Bool { self != .queued && self != .running }
 
+    /// The run went wrong: the menu bar icon shows a warning.
+    public var isFailure: Bool { self == .failed || self == .timedOut }
+
     public var title: String {
         switch self {
         case .queued: "Queued"
@@ -370,12 +373,14 @@ public struct StatusResult: Codable, Equatable, Sendable {
     public var running: Int
     public var queued: Int
     public var maxConcurrent: UInt32
+    /// Scheduled runs do not start.
+    public var paused: Bool
     public var next: NextRun?
     public var dataDir: String
     public var logsDir: String
 
     enum CodingKeys: String, CodingKey {
-        case pid, jobs, running, queued, next
+        case pid, jobs, running, queued, paused, next
         case daemonVersion = "daemon_version"
         case apiVersion = "api_version"
         case startedAt = "started_at"
@@ -384,33 +389,71 @@ public struct StatusResult: Codable, Equatable, Sendable {
         case dataDir = "data_dir"
         case logsDir = "logs_dir"
     }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        daemonVersion = try c.decode(String.self, forKey: .daemonVersion)
+        apiVersion = try c.decode(String.self, forKey: .apiVersion)
+        pid = try c.decode(UInt32.self, forKey: .pid)
+        startedAt = try c.decode(String.self, forKey: .startedAt)
+        jobs = try c.decode(Int.self, forKey: .jobs)
+        enabledJobs = try c.decode(Int.self, forKey: .enabledJobs)
+        running = try c.decode(Int.self, forKey: .running)
+        queued = try c.decode(Int.self, forKey: .queued)
+        maxConcurrent = try c.decode(UInt32.self, forKey: .maxConcurrent)
+        // A 1.0 daemon does not send it.
+        paused = try c.decodeIfPresent(Bool.self, forKey: .paused) ?? false
+        next = try c.decodeIfPresent(NextRun.self, forKey: .next)
+        dataDir = try c.decode(String.self, forKey: .dataDir)
+        logsDir = try c.decode(String.self, forKey: .logsDir)
+    }
 }
 
 public struct Config: Codable, Equatable, Sendable {
     public var maxConcurrent: UInt32
     public var keepRuns: UInt32
+    /// No scheduled run starts; a run someone asks for still does.
+    public var paused: Bool
+    /// The last resume. Times before it are not caught up.
+    public var resumedAt: String?
 
-    public init(maxConcurrent: UInt32, keepRuns: UInt32) {
+    public init(maxConcurrent: UInt32, keepRuns: UInt32, paused: Bool = false, resumedAt: String? = nil) {
         self.maxConcurrent = maxConcurrent
         self.keepRuns = keepRuns
+        self.paused = paused
+        self.resumedAt = resumedAt
     }
 
     enum CodingKeys: String, CodingKey {
+        case paused
         case maxConcurrent = "max_concurrent"
         case keepRuns = "keep_runs"
+        case resumedAt = "resumed_at"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        maxConcurrent = try c.decode(UInt32.self, forKey: .maxConcurrent)
+        keepRuns = try c.decode(UInt32.self, forKey: .keepRuns)
+        paused = try c.decodeIfPresent(Bool.self, forKey: .paused) ?? false
+        resumedAt = try c.decodeIfPresent(String.self, forKey: .resumedAt)
     }
 }
 
 public struct SetConfigParams: Codable, Equatable, Sendable {
     public var maxConcurrent: UInt32?
     public var keepRuns: UInt32?
+    /// Pause (true) or resume (false) every schedule.
+    public var paused: Bool?
 
-    public init(maxConcurrent: UInt32? = nil, keepRuns: UInt32? = nil) {
+    public init(maxConcurrent: UInt32? = nil, keepRuns: UInt32? = nil, paused: Bool? = nil) {
         self.maxConcurrent = maxConcurrent
         self.keepRuns = keepRuns
+        self.paused = paused
     }
 
     enum CodingKeys: String, CodingKey {
+        case paused
         case maxConcurrent = "max_concurrent"
         case keepRuns = "keep_runs"
     }
@@ -476,18 +519,37 @@ public struct RunResult: Codable, Equatable, Sendable {
     public var run: Run
 }
 
-public struct RunIdParams: Codable, Equatable, Sendable {
+public struct CancelRunParams: Codable, Equatable, Sendable {
     public var runId: String
+    /// SIGKILL now, also for a run that is already stopping.
+    public var force: Bool
 
-    public init(runId: String) { self.runId = runId }
+    public init(runId: String, force: Bool = false) {
+        self.runId = runId
+        self.force = force
+    }
 
     enum CodingKeys: String, CodingKey {
+        case force
         case runId = "run_id"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        runId = try c.decode(String.self, forKey: .runId)
+        force = try c.decodeIfPresent(Bool.self, forKey: .force) ?? false
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(runId, forKey: .runId)
+        if force { try c.encode(force, forKey: .force) }
     }
 }
 
 public struct CancelRunResult: Codable, Equatable, Sendable {
-    /// False when the run had already finished.
+    /// False when the run had already finished, or was already being
+    /// stopped (killed, with `force`).
     public var canceled: Bool
     public var run: Run
 }

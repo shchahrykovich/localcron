@@ -1,0 +1,8 @@
+{
+  "id": 1,
+  "method": "cancel_run",
+  "params": {
+    "run_id": "nightly.4",
+    "force": true
+  }
+}

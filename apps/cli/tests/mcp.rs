@@ -36,7 +36,20 @@ async fn the_tools_are_listed_with_instructions() {
     names.sort();
     assert_eq!(
         names,
-        ["add_job", "cancel_run", "enable_job", "get_job", "get_run_log", "list_jobs", "list_runs", "preview_schedule", "remove_job", "run_job", "status"]
+        [
+            "add_job",
+            "cancel_run",
+            "enable_job",
+            "get_job",
+            "get_run_log",
+            "list_jobs",
+            "list_runs",
+            "preview_schedule",
+            "remove_job",
+            "run_job",
+            "set_paused",
+            "status"
+        ]
     );
     let info = client.peer_info().unwrap();
     assert!(info.instructions.as_deref().unwrap().contains("How to add a job"));
@@ -82,5 +95,15 @@ async fn an_agent_schedules_a_job_in_its_project_and_runs_it() {
     assert_eq!(json_of(&r)["removed"], true);
     let r = call(&client, "add_job", json!({"id": "x", "schedule": "@daily", "kind": "shell", "cmd": "ls"})).await;
     assert_eq!(r.is_error, Some(true));
+
+    let r = call(&client, "set_paused", json!({"paused": true})).await;
+    assert_eq!(json_of(&r)["paused"], true, "{r:?}");
+    assert_eq!(json_of(&call(&client, "status", json!({})).await)["paused"], true);
+    let r = call(&client, "cancel_run", json!({"run_id": run, "force": true})).await;
+    // The job was removed with its runs; force is a known argument.
+    assert_eq!(r.is_error, Some(true));
+    assert!(json_of(&r).as_str().unwrap().contains("no run"), "{r:?}");
+    let r = call(&client, "set_paused", json!({"paused": false})).await;
+    assert_eq!(json_of(&r)["paused"], false);
     client.cancel().await.unwrap();
 }

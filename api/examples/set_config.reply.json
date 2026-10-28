@@ -2,6 +2,7 @@
   "id": 1,
   "result": {
     "keep_runs": 20,
-    "max_concurrent": 3
+    "max_concurrent": 3,
+    "paused": false
   }
 }

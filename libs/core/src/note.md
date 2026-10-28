@@ -16,7 +16,10 @@ The MCP server `{{CLI}}` has these tools. The CLI `{{CLI}}` does the same
 
 - `add_job`: create a job. `replace: true` changes an existing one.
 - `list_jobs`, `get_job`, `remove_job`, `enable_job`
-- `run_job`: run now, outside the schedule. `cancel_run` stops it.
+- `run_job`: run now, outside the schedule. `cancel_run` stops it;
+  `force: true` kills it at once.
+- `set_paused`: pause or resume every schedule, only when the user asks.
+  While paused no scheduled run starts; `run_job` still works.
 - `list_runs`, `get_run_log`: status, exit code and output of past runs.
 - `preview_schedule`: the next times of a schedule, and the schedule in words.
 

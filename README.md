@@ -16,7 +16,13 @@ LocalCron's MCP server. On Wednesday at 9, LocalCron starts
 - Three kinds of job: `shell`, `claude` (`claude -p`), `codex` (`codex exec`).
 - Controls the runs: at most N at the same time (default 2), a queue for the
   others, no second run of a job that is still running, a timeout per job,
-  and Cancel, which stops the job and every process it started.
+  and Cancel, which stops the job and every process it started (SIGTERM,
+  then SIGKILL after 10 s; **Kill Now** sends SIGKILL at once).
+- Pause: **Pause All Jobs** (menu bar menu, window header, `localcron pause`)
+  stops every schedule until you resume. Run Now still works. Times missed
+  while paused are not caught up.
+- The menu bar icon shows a pause sign while paused, and a yellow warning
+  triangle while the last run of a job has failed or timed out.
 - Catches up: a time the Mac slept through runs once when it wakes.
 - Keeps the output of each run in a log file, and the last 20 runs per job.
 - Small: the daemon sleeps until the next due time. It has no polling loop
@@ -47,7 +53,7 @@ Ask in plain words:
 Claude calls `add_job` and tells you the schedule in words and the next run.
 The MCP tools: `add_job`, `list_jobs`, `get_job`, `remove_job`, `enable_job`,
 `run_job`, `cancel_run`, `list_runs`, `get_run_log`, `preview_schedule`,
-`status`.
+`set_paused`, `status`.
 
 A scheduled agent has no person to approve its tools. Without permission
 options, `claude -p` refuses a tool that needs approval. Give a job

@@ -26,6 +26,7 @@ struct RunsView: View {
                     Button("Reveal Log in Finder") { model.revealLog(run) }
                     if !run.status.isFinished {
                         Button("Stop") { Task { await model.cancel(run) } }
+                        Button("Kill Now") { Task { await model.cancel(run, kill: true) } }
                     }
                 }
             }

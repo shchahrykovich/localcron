@@ -6,8 +6,8 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::Arc;
 
 use localcron_core::api::{
-    self, ApiError, ErrorCode, GetRunLogParams, HelloParams, HelloResult, IdParams, JobResult, ListRunsParams,
-    PreviewScheduleParams, Request, Response, RunIdParams, RunResult, SetConfigParams, SetJobEnabledParams, SetJobParams,
+    self, ApiError, CancelRunParams, ErrorCode, GetRunLogParams, HelloParams, HelloResult, IdParams, JobResult, ListRunsParams,
+    PreviewScheduleParams, Request, Response, RunResult, SetConfigParams, SetJobEnabledParams, SetJobParams,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -104,7 +104,10 @@ pub fn dispatch(engine: &Engine, request: Request) -> Result<Value, ApiError> {
             to_value(JobResult { job: engine.set_job_enabled(&p.id, p.enabled)? })
         }
         "run_job" => to_value(RunResult { run: engine.run_job(&params::<IdParams>(p)?.id)? }),
-        "cancel_run" => to_value(engine.cancel_run(&params::<RunIdParams>(p)?.run_id)?),
+        "cancel_run" => {
+            let p: CancelRunParams = params(p)?;
+            to_value(engine.cancel_run(&p.run_id, p.force)?)
+        }
         "list_runs" => to_value(engine.list_runs(params::<ListRunsParams>(p)?)),
         "get_run_log" => to_value(engine.get_run_log(params::<GetRunLogParams>(p)?)?),
         "preview_schedule" => to_value(engine.preview_schedule(params::<PreviewScheduleParams>(p)?)?),

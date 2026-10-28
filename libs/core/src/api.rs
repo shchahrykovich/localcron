@@ -14,7 +14,7 @@ use crate::job::Job;
 use crate::run::Run;
 
 /// Major.minor. A client stops when the major number differs.
-pub const API_VERSION: &str = "1.0";
+pub const API_VERSION: &str = "1.1";
 
 pub fn api_major(version: &str) -> Option<u32> {
     version.split('.').next()?.parse().ok()
@@ -111,6 +111,9 @@ pub struct StatusResult {
     pub running: usize,
     pub queued: usize,
     pub max_concurrent: u32,
+    /// Scheduled runs do not start (`Config::paused`).
+    #[serde(default)]
+    pub paused: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next: Option<NextRun>,
     pub data_dir: String,
@@ -180,14 +183,23 @@ pub struct RunResult {
     pub run: Run,
 }
 
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct RunIdParams {
+pub struct CancelRunParams {
     pub run_id: String,
+    /// SIGKILL now, without the SIGTERM and the grace time. Also works on a
+    /// run that is already stopping.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub force: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CancelRunResult {
-    /// False when the run had already finished.
+    /// False when the run had already finished, or was already being
+    /// stopped (killed, with `force`).
     pub canceled: bool,
     pub run: Run,
 }
@@ -256,11 +268,18 @@ pub struct Config {
     /// Finished runs kept per job, with their log files.
     #[serde(default = "default_keep_runs")]
     pub keep_runs: u32,
+    /// No scheduled run starts. A run someone asks for (run_job) still does.
+    #[serde(default)]
+    pub paused: bool,
+    /// The last resume. A time before it is not caught up: it was missed on
+    /// purpose.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resumed_at: Option<DateTime<FixedOffset>>,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { max_concurrent: DEFAULT_MAX_CONCURRENT, keep_runs: DEFAULT_KEEP_RUNS }
+        Self { max_concurrent: DEFAULT_MAX_CONCURRENT, keep_runs: DEFAULT_KEEP_RUNS, paused: false, resumed_at: None }
     }
 }
 
@@ -282,4 +301,7 @@ pub struct SetConfigParams {
     pub max_concurrent: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keep_runs: Option<u32>,
+    /// Pause (true) or resume (false) every schedule.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paused: Option<bool>,
 }

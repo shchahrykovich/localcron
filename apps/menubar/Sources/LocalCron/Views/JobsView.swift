@@ -69,7 +69,9 @@ struct JobRow: View {
                 Text(job.scheduleText).font(.caption).foregroundStyle(.secondary)
                 Text(summary).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 HStack(spacing: 10) {
-                    if let next = job.nextRun.flatMap(ApiDate.parse) {
+                    if model.paused && job.job.enabled {
+                        Text("Paused").font(.caption).foregroundStyle(.orange)
+                    } else if let next = job.nextRun.flatMap(ApiDate.parse) {
                         Text("Next \(Formatting.next(next))").font(.caption)
                     } else if !job.job.enabled {
                         Text("Off").font(.caption).foregroundStyle(.secondary)
@@ -109,6 +111,7 @@ struct JobRow: View {
             Button("Run Now") { Task { await model.runNow(job) } }
             if let active = job.activeRun {
                 Button("Stop \(active.id)") { Task { await model.cancel(active) } }
+                Button("Kill \(active.id) Now") { Task { await model.cancel(active, kill: true) } }
             }
             Divider()
             if let run = job.activeRun ?? job.lastRun {

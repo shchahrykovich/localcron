@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use localcron_core::api::{
-    Empty, GetRunLogParams, IdParams, ListRunsParams, PreviewScheduleParams, RunIdParams, SetJobEnabledParams, SetJobParams,
+    CancelRunParams, Empty, GetRunLogParams, IdParams, ListRunsParams, PreviewScheduleParams, SetConfigParams, SetJobEnabledParams, SetJobParams,
 };
 use localcron_core::instance::Instance;
 use localcron_core::job::{DEFAULT_TIMEOUT_SECS, Job, JobKind};
@@ -115,9 +115,19 @@ pub struct EnableArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct RunIdArgs {
+pub struct CancelArgs {
     /// The run id, for example "weekly-review.12".
     pub run_id: String,
+    /// SIGKILL now, without waiting. Also for a run that is already stopping. Default false.
+    #[serde(default)]
+    pub force: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PausedArgs {
+    /// true: no scheduled run starts. false: the schedules run again.
+    pub paused: bool,
 }
 
 #[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
@@ -225,9 +235,16 @@ slot), or skipped when the job is already running. Check it later with list_runs
     }
 
     #[tool(description = "Stop a queued or running run. Its process and every process it started get SIGTERM, then \
-SIGKILL after 10 seconds.")]
-    async fn cancel_run(&self, Parameters(args): Parameters<RunIdArgs>) -> Result<CallToolResult, ErrorData> {
-        Ok(self.call("cancel_run", RunIdParams { run_id: args.run_id }).await)
+SIGKILL after 10 seconds; with force, SIGKILL now.")]
+    async fn cancel_run(&self, Parameters(args): Parameters<CancelArgs>) -> Result<CallToolResult, ErrorData> {
+        Ok(self.call("cancel_run", CancelRunParams { run_id: args.run_id, force: args.force.unwrap_or(false) }).await)
+    }
+
+    #[tool(description = "Pause or resume every schedule. While paused no scheduled run starts and queued \
+scheduled runs are canceled; run_job still works and running runs go on. Times missed while paused are not caught \
+up. Only when the user asks. Returns the settings with paused.")]
+    async fn set_paused(&self, Parameters(args): Parameters<PausedArgs>) -> Result<CallToolResult, ErrorData> {
+        Ok(self.call("set_config", SetConfigParams { paused: Some(args.paused), ..Default::default() }).await)
     }
 
     #[tool(description = "Recent runs, newest first: status (queued, running, succeeded, failed, timed_out, \
@@ -247,8 +264,8 @@ why it is not valid.")]
         Ok(self.call("preview_schedule", PreviewScheduleParams { schedule: args.schedule, count: args.count }).await)
     }
 
-    #[tool(description = "Daemon version, number of jobs, runs in progress and queued, the most runs at once, and \
-the next run.")]
+    #[tool(description = "Daemon version, number of jobs, runs in progress and queued, the most runs at once, \
+paused, and the next run.")]
     async fn status(&self, Parameters(_): Parameters<NoArgs>) -> Result<CallToolResult, ErrorData> {
         Ok(self.call("status", Empty {}).await)
     }

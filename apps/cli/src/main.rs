@@ -12,8 +12,8 @@ use anyhow::{Context, bail};
 use chrono::{DateTime, FixedOffset, Local};
 use clap::{Args, Parser, Subcommand};
 use localcron_core::api::{
-    Config, Empty, GetRunLogParams, GetRunLogResult, IdParams, JobResult, JobView, ListJobsResult, ListRunsParams,
-    ListRunsResult, PreviewScheduleParams, PreviewScheduleResult, RunIdParams, RunResult, SetConfigParams, SetJobEnabledParams,
+    CancelRunParams, Config, Empty, GetRunLogParams, GetRunLogResult, IdParams, JobResult, JobView, ListJobsResult, ListRunsParams,
+    ListRunsResult, PreviewScheduleParams, PreviewScheduleResult, RunResult, SetConfigParams, SetJobEnabledParams,
     SetJobParams, SetJobResult, StatusResult,
 };
 use localcron_core::instance::Instance;
@@ -57,8 +57,17 @@ enum Command {
         #[arg(long)]
         wait: bool,
     },
-    /// Stop a queued or running run.
-    Cancel { run_id: String },
+    /// Stop a queued or running run: SIGTERM, then SIGKILL after 10 s.
+    Cancel {
+        run_id: String,
+        /// SIGKILL now, also when the run is already stopping.
+        #[arg(long)]
+        kill: bool,
+    },
+    /// Pause every schedule: no scheduled run starts until resume. `run` still works.
+    Pause,
+    /// Resume the schedules. Times missed while paused are not caught up.
+    Resume,
     /// Recent runs, newest first.
     Runs {
         job_id: Option<String>,
@@ -183,6 +192,9 @@ fn run(cli: Cli, instance: &Instance, paths: &Paths) -> anyhow::Result<ExitCode>
                 let s: StatusResult = serde_json::from_value(v)?;
                 println!("{} {} (pid {}), running since {}", instance.daemon_program(), s.daemon_version, s.pid, when(&s.started_at));
                 println!("jobs: {} ({} on), running: {}, queued: {}, max at once: {}", s.jobs, s.enabled_jobs, s.running, s.queued, s.max_concurrent);
+                if s.paused {
+                    println!("paused: scheduled runs do not start ({} resume)", instance.cli());
+                }
                 if let Some(next) = s.next {
                     println!("next: {} {}", next.job_id, when(&next.at));
                 }
@@ -262,16 +274,20 @@ fn run(cli: Cli, instance: &Instance, paths: &Paths) -> anyhow::Result<ExitCode>
                 _ => ExitCode::FAILURE,
             });
         }
-        Command::Cancel { run_id } => {
-            let v = call("cancel_run", serde_json::to_value(RunIdParams { run_id: run_id.clone() })?)?;
+        Command::Cancel { run_id, kill } => {
+            let v = call("cancel_run", serde_json::to_value(CancelRunParams { run_id: run_id.clone(), force: kill })?)?;
             if json {
                 show(&v)?;
             } else if v["canceled"] == true {
-                println!("Stopping {run_id}");
+                println!("{} {run_id}", if kill { "Killing" } else { "Stopping" });
+            } else if v["run"]["status"] == "running" {
+                println!("{run_id} is already {}", if kill { "killed" } else { "stopping; --kill ends it now" });
             } else {
                 println!("{run_id} has already ended");
             }
         }
+        Command::Pause => set_paused(&call, instance, true, json)?,
+        Command::Resume => set_paused(&call, instance, false, json)?,
         Command::Runs { job_id, limit } => {
             let v = call("list_runs", serde_json::to_value(ListRunsParams { job_id, limit: Some(limit) })?)?;
             if json {
@@ -314,13 +330,13 @@ fn run(cli: Cli, instance: &Instance, paths: &Paths) -> anyhow::Result<ExitCode>
             let v = if max_concurrent.is_none() && keep_runs.is_none() {
                 call("get_config", serde_json::to_value(Empty {})?)?
             } else {
-                call("set_config", serde_json::to_value(SetConfigParams { max_concurrent, keep_runs })?)?
+                call("set_config", serde_json::to_value(SetConfigParams { max_concurrent, keep_runs, paused: None })?)?
             };
             if json {
                 show(&v)?;
             } else {
                 let c: Config = serde_json::from_value(v)?;
-                println!("max_concurrent: {}\nkeep_runs: {}", c.max_concurrent, c.keep_runs);
+                println!("max_concurrent: {}\nkeep_runs: {}\npaused: {}", c.max_concurrent, c.keep_runs, c.paused);
             }
         }
     }
@@ -339,6 +355,23 @@ fn set_enabled(
     } else {
         let job = serde_json::from_value::<JobResult>(v)?.job;
         print_job_line(&job);
+    }
+    Ok(())
+}
+
+fn set_paused(
+    call: &dyn Fn(&str, Value) -> Result<Value, client::ClientError>,
+    instance: &Instance,
+    paused: bool,
+    json: bool,
+) -> anyhow::Result<()> {
+    let v = call("set_config", serde_json::to_value(SetConfigParams { paused: Some(paused), ..Default::default() })?)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&v)?);
+    } else if paused {
+        println!("Paused: no scheduled run starts until {} resume.", instance.cli());
+    } else {
+        println!("Resumed. Times missed while paused are not caught up.");
     }
     Ok(())
 }

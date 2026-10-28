@@ -1,0 +1,8 @@
+{
+  "id": 1,
+  "result": {
+    "keep_runs": 20,
+    "max_concurrent": 2,
+    "paused": true
+  }
+}

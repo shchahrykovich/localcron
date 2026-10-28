@@ -5,6 +5,10 @@ import Foundation
 public enum AppMenu {
     public enum Action: Hashable, Sendable {
         case openWindow, newJob
+        /// Pause (true) or resume (false) every schedule.
+        case setPaused(Bool)
+        case stopRun(String), stopAllRuns
+        case showLog(String)
         case installCLI, installClaude, installCodex, copyMCPCommand
         case openLogsFolder
         case checkForUpdates, settings, quit
@@ -30,24 +34,76 @@ public enum AppMenu {
         case submenu(title: String, symbol: String, entries: [Entry])
     }
 
+    /// A run in the menu: one that is queued or running, or the failed last
+    /// run of a job.
+    public struct RunEntry: Equatable, Sendable {
+        public var runID: String
+        public var jobID: String
+        /// "running for 2 min", "exit 2".
+        public var detail: String?
+
+        public init(runID: String, jobID: String, detail: String?) {
+            self.runID = runID
+            self.jobID = jobID
+            self.detail = detail
+        }
+    }
+
     /// What the menu depends on; read again at each open.
     public struct Context: Sendable {
         public var appName: String
         public var cliInstalled: Bool
         /// "3 jobs, next: weekly-review in 2 days"; nil when the daemon is not running.
         public var summary: String?
+        public var paused: Bool
+        /// Queued and running runs.
+        public var running: [RunEntry]
+        /// Jobs whose last run failed or timed out.
+        public var failed: [RunEntry]
 
-        public init(appName: String, cliInstalled: Bool, summary: String?) {
+        public init(appName: String, cliInstalled: Bool, summary: String?, paused: Bool = false,
+                    running: [RunEntry] = [], failed: [RunEntry] = []) {
             self.appName = appName
             self.cliInstalled = cliInstalled
             self.summary = summary
+            self.paused = paused
+            self.running = running
+            self.failed = failed
         }
     }
 
     public static func entries(_ c: Context) -> [Entry] {
-        [
+        var entries: [Entry] = [
             .item(Item(title: "Open \(c.appName)", symbol: "clock", action: .openWindow, detail: c.summary, emphasized: true)),
             .item(Item(title: "New Job…", symbol: "plus", action: .newJob, shortcut: "n")),
+        ]
+        if c.summary != nil {
+            entries.append(c.paused
+                ? .item(Item(title: "Resume All Jobs", symbol: "play.fill", action: .setPaused(false),
+                             detail: "Times missed while paused are not run"))
+                : .item(Item(title: "Pause All Jobs", symbol: "pause.fill", action: .setPaused(true),
+                             detail: "No scheduled run starts")))
+        }
+        if !c.running.isEmpty {
+            entries.append(.separator)
+            entries.append(.header("Running"))
+            for run in c.running {
+                entries.append(.item(Item(title: "Stop \(run.jobID)", symbol: "stop.circle", action: .stopRun(run.runID),
+                                          detail: run.detail)))
+            }
+            if c.running.count > 1 {
+                entries.append(.item(Item(title: "Stop All Runs", symbol: "stop.fill", action: .stopAllRuns)))
+            }
+        }
+        if !c.failed.isEmpty {
+            entries.append(.separator)
+            entries.append(.header("Last run failed"))
+            for run in c.failed {
+                entries.append(.item(Item(title: run.jobID, symbol: "exclamationmark.triangle", action: .showLog(run.runID),
+                                          detail: run.detail)))
+            }
+        }
+        return entries + [
             .separator,
             .header("Coding agents"),
             .item(Item(title: "Add to Claude Code…", symbol: "sparkles", action: .installClaude)),

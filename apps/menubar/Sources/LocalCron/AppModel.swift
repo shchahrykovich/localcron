@@ -59,7 +59,11 @@ final class AppModel {
 
     var inBundle: Bool { Bundle.main.bundleURL.pathExtension == "app" }
     var running: Bool { status != nil }
-    var anyRunActive: Bool { (status?.running ?? 0) > 0 }
+    /// Scheduled runs do not start.
+    var paused: Bool { status?.paused ?? false }
+    /// Queued and running runs: at most one per job.
+    var activeRuns: [Run] { jobs.compactMap(\.activeRun) }
+    var statusIcon: StatusIcon { StatusIcon(status: status, jobs: jobs) }
 
     // MARK: Lifecycle
 
@@ -204,9 +208,41 @@ final class AppModel {
         }
     }
 
-    func cancel(_ run: Run) async {
-        if let result = await perform("Could not stop \(run.id)", { try await client.cancelRun(id: run.id) }) {
-            say(result.canceled ? "Stopping \(run.id)." : "\(run.id) had already finished.")
+    /// Stop: SIGTERM, then SIGKILL after 10 s. Kill: SIGKILL now.
+    func cancel(_ run: Run, kill: Bool = false) async {
+        let verb = kill ? "kill" : "stop"
+        guard let result = await perform("Could not \(verb) \(run.id)", { try await client.cancelRun(id: run.id, force: kill) })
+        else { return }
+        if result.canceled {
+            say(kill ? "Killed \(run.id)." : "Stopping \(run.id).")
+        } else if result.run.status.isFinished {
+            say("\(run.id) had already finished.")
+        } else {
+            say(kill ? "\(run.id) is already killed." : "\(run.id) is already stopping. Kill Now ends it at once.")
+        }
+    }
+
+    func stopAll() async {
+        let runs = activeRuns
+        var stopped = 0
+        for run in runs {
+            do {
+                if try await client.cancelRun(id: run.id).canceled { stopped += 1 }
+            } catch {
+                say("Could not stop \(run.id): \(error.localizedDescription)", failed: true)
+                await refresh()
+                return
+            }
+        }
+        await refresh()
+        say(stopped == 0 ? "No run to stop." : "Stopping \(stopped) run\(stopped == 1 ? "" : "s").")
+    }
+
+    func setPaused(_ paused: Bool) async {
+        let what = paused ? "Could not pause" : "Could not resume"
+        if await perform(what, { try await client.setConfig(SetConfigParams(paused: paused)) }) != nil {
+            say(paused ? "Paused: no scheduled run starts. Run Now still works."
+                       : "Resumed. Times missed while paused are not run.")
         }
     }
 
@@ -265,7 +301,11 @@ final class AppModel {
     }
 
     func showLog(_ run: Run) {
-        page = .log(runID: run.id)
+        showLog(runID: run.id)
+    }
+
+    func showLog(runID: String) {
+        page = .log(runID: runID)
     }
 
     func revealLog(_ run: Run) {
@@ -388,7 +428,19 @@ final class AppModel {
                 summary! += ", next: \(next.jobId) \(Formatting.next(at))"
             }
         }
-        return AppMenu.Context(appName: Instance.current.appName, cliInstalled: cliInstalled, summary: summary)
+        let running = activeRuns.map { run in
+            let detail = run.status == .queued ? "queued" : run.seconds.map { "running for \(Formatting.duration($0))" }
+            return AppMenu.RunEntry(runID: run.id, jobID: run.jobId, detail: detail)
+        }
+        let failed = status == nil ? [] : jobs.compactMap { job -> AppMenu.RunEntry? in
+            guard let last = job.lastRun, last.status.isFailure else { return nil }
+            var parts = [last.status.title]
+            if let code = last.exitCode { parts.append("exit \(code)") }
+            if let ended = ApiDate.parse(last.endedAt) { parts.append(Formatting.past(ended)) }
+            return AppMenu.RunEntry(runID: last.id, jobID: job.id, detail: parts.joined(separator: " · "))
+        }
+        return AppMenu.Context(appName: Instance.current.appName, cliInstalled: cliInstalled, summary: summary,
+                               paused: paused, running: running, failed: failed)
     }
 
     // MARK: Updates

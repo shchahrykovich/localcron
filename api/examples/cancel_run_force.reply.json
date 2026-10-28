@@ -1,0 +1,17 @@
+{
+  "id": 1,
+  "result": {
+    "canceled": true,
+    "run": {
+      "id": "nightly.4",
+      "job_id": "nightly",
+      "log": "/Users/me/Library/Logs/LocalCron/runs/nightly/nightly.4.log",
+      "message": "killed",
+      "pid": 9512,
+      "queued_at": "2026-10-28T11:05:00Z",
+      "started_at": "2026-10-28T11:05:00Z",
+      "status": "running",
+      "trigger": "schedule"
+    }
+  }
+}

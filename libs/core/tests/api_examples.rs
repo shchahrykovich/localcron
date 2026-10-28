@@ -46,7 +46,7 @@ fn every_example_decodes_and_every_method_has_one() {
                 "get_job" | "remove_job" | "run_job" => check::<IdParams>(p, &file),
                 "set_job" => check::<SetJobParams>(p, &file),
                 "set_job_enabled" => check::<SetJobEnabledParams>(p, &file),
-                "cancel_run" => check::<RunIdParams>(p, &file),
+                "cancel_run" => check::<CancelRunParams>(p, &file),
                 "list_runs" => check::<ListRunsParams>(p, &file),
                 "get_run_log" => check::<GetRunLogParams>(p, &file),
                 "preview_schedule" => check::<PreviewScheduleParams>(p, &file),

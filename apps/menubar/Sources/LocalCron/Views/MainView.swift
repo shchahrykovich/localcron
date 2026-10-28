@@ -51,12 +51,33 @@ struct MainView: View {
             Text(Instance.current.appName).font(.headline)
             Spacer()
             if let status = model.status {
+                if status.paused {
+                    Label("Paused", systemImage: "pause.circle.fill")
+                        .font(.caption).foregroundStyle(.orange)
+                        .help("Scheduled runs do not start. Run Now still works.")
+                }
                 if status.running > 0 || status.queued > 0 {
                     Text("\(status.running) running" + (status.queued > 0 ? ", \(status.queued) queued" : ""))
                         .font(.caption).foregroundStyle(.blue)
-                } else {
+                } else if !status.paused {
                     Text("\(status.enabledJobs) of \(status.jobs) jobs on").font(.caption).foregroundStyle(.secondary)
                 }
+                if !model.activeRuns.isEmpty {
+                    Button {
+                        Task { await model.stopAll() }
+                    } label: {
+                        Image(systemName: "stop.fill")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Stop all runs")
+                }
+                Button {
+                    Task { await model.setPaused(!status.paused) }
+                } label: {
+                    Image(systemName: status.paused ? "play.fill" : "pause.fill")
+                }
+                .buttonStyle(.borderless)
+                .help(status.paused ? "Resume all jobs" : "Pause all jobs: no scheduled run starts")
             } else {
                 Label("Not running", systemImage: "exclamationmark.triangle.fill")
                     .font(.caption).foregroundStyle(.orange)
@@ -96,6 +117,7 @@ struct MainView: View {
     }
 
     private var nextText: String {
+        if model.paused { return "Paused: scheduled runs do not start." }
         guard let next = model.status?.next, let at = ApiDate.parse(next.at) else { return "No run is planned." }
         return "Next: \(next.jobId) \(Formatting.next(at))"
     }

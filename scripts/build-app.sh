@@ -82,7 +82,7 @@ fi
 if [[ ! -f "$icon_cache" || "$ROOT/scripts/make-icon.swift" -nt "$icon_cache" ]]; then
     lr_say "Drawing the icon"
     tmp="$(mktemp -d)"
-    swift "$ROOT/scripts/make-icon.swift" "$tmp/icon.png" "${icon_args[@]}"
+    swift "$ROOT/scripts/make-icon.swift" "$tmp/icon.png" ${icon_args[@]+"${icon_args[@]}"}
     mkdir "$tmp/AppIcon.iconset"
     for s in 16 32 128 256 512; do
         sips -z $s $s "$tmp/icon.png" --out "$tmp/AppIcon.iconset/icon_${s}x${s}.png" >/dev/null

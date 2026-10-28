@@ -9,7 +9,7 @@ import SwiftUI
 @MainActor
 final class StatusItemController: NSObject, NSPopoverDelegate {
     private unowned let model: AppModel
-    /// Variable: the pause and warning badges make the icon wider.
+    /// Variable: the running, pause and warning badges make the icon wider.
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let popover = NSPopover()
     /// When the popover last closed. A click on the icon first closes the
@@ -55,13 +55,13 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         }
     }
 
-    /// The clock, then a column: the warning triangle at the top, the pause
-    /// sign at the bottom.
+    /// The clock, a green play sign while runs are going, then a column: the
+    /// warning triangle at the top, the pause sign at the bottom.
     private func image(for icon: StatusIcon) -> NSImage? {
         let name = Instance.current.appName
         // The status bar ignores contentTintColor, so a color is drawn into
         // the image, which then must not be a template.
-        let colored = isDev || icon.warning
+        let colored = isDev || icon.warning || icon.running > 0
         let tint = NSImage.SymbolConfiguration(paletteColors: [isDev ? .systemOrange : Self.menuBarText])
         // withSymbolConfiguration replaces the configuration: size and color
         // go in one.
@@ -76,15 +76,23 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             ? NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: nil)?
                 .withSymbolConfiguration(badge.applying(.init(paletteColors: [.black, .systemYellow])))
             : nil
-        if warning == nil && pause == nil {
+        let play = icon.running > 0
+            ? NSImage(systemSymbolName: "play.fill", accessibilityDescription: nil)?
+                .withSymbolConfiguration(badge.applying(.init(paletteColors: [.systemGreen])))
+            : nil
+        if warning == nil && pause == nil && play == nil {
             clock.isTemplate = !colored
             return clock
         }
+        let playWidth = play.map { $0.size.width + 1 } ?? 0
         let column = max(warning?.size.width ?? 0, pause?.size.width ?? 0)
-        let size = NSSize(width: (clock.size.width + 1 + column).rounded(.up), height: max(clock.size.height, 16))
+        let size = NSSize(width: (clock.size.width + 1 + playWidth + column).rounded(.up), height: max(clock.size.height, 16))
         let image = NSImage(size: size, flipped: false) { rect in
             clock.draw(in: NSRect(origin: NSPoint(x: 0, y: (rect.height - clock.size.height) / 2), size: clock.size))
-            let x = clock.size.width + 1
+            if let play {
+                play.draw(in: NSRect(origin: NSPoint(x: clock.size.width + 1, y: (rect.height - play.size.height) / 2), size: play.size))
+            }
+            let x = clock.size.width + 1 + playWidth
             if let warning {
                 warning.draw(in: NSRect(origin: NSPoint(x: x + (column - warning.size.width) / 2, y: rect.height - warning.size.height),
                                         size: warning.size))

@@ -30,10 +30,17 @@ final class StatusIconTests: XCTestCase {
         let jobs = [try job("a", last: "failed"), try job("b", last: "timed_out"), try job("c", last: "canceled")]
         let icon = StatusIcon(status: try status(running: 1, paused: true), jobs: jobs)
         XCTAssertEqual(icon.symbol, "clock.arrow.circlepath")
+        XCTAssertEqual(icon.running, 1)
         XCTAssertTrue(icon.paused)
         XCTAssertEqual(icon.failedJobs, ["a", "b"], "a canceled run is not a failure")
         XCTAssertEqual(icon.toolTip(appName: "LocalCron"),
-                       "LocalCron\nPaused: scheduled runs do not start.\nThe last run failed: a, b")
+                       "LocalCron\n1 run is running.\nPaused: scheduled runs do not start.\nThe last run failed: a, b")
+    }
+
+    func testRunningRunsAddThePlayBadge() throws {
+        let icon = StatusIcon(status: try status(running: 2), jobs: [try job("a", last: "succeeded")])
+        XCTAssertEqual(icon, StatusIcon(symbol: "clock.arrow.circlepath", running: 2, paused: false, failedJobs: []))
+        XCTAssertEqual(icon.toolTip(appName: "LocalCron"), "LocalCron\n2 runs are running.")
     }
 
     func testNoDaemonShowsOnlyTheProblem() throws {

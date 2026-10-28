@@ -1,10 +1,13 @@
 import Foundation
 
 /// What the menu bar icon shows. StatusItemController draws it: the clock,
-/// then a column with a warning triangle (top) and a pause sign (bottom).
+/// a green play sign while runs are going, then a column with a warning
+/// triangle (top) and a pause sign (bottom).
 public struct StatusIcon: Equatable, Sendable {
     /// The clock, an SF Symbol name.
     public var symbol: String
+    /// Runs that are running now (queued runs are not counted).
+    public var running: Int
     /// Scheduled runs do not start.
     public var paused: Bool
     /// The jobs whose last run failed or timed out. The warning stays until
@@ -13,8 +16,9 @@ public struct StatusIcon: Equatable, Sendable {
 
     public var warning: Bool { !failedJobs.isEmpty }
 
-    public init(symbol: String, paused: Bool, failedJobs: [String]) {
+    public init(symbol: String, running: Int = 0, paused: Bool, failedJobs: [String]) {
         self.symbol = symbol
+        self.running = running
         self.paused = paused
         self.failedJobs = failedJobs
     }
@@ -27,6 +31,7 @@ public struct StatusIcon: Equatable, Sendable {
             return
         }
         self.init(symbol: status.running > 0 ? "clock.arrow.circlepath" : "clock",
+                  running: status.running,
                   paused: status.paused,
                   failedJobs: jobs.filter { $0.lastRun?.status.isFailure == true }.map(\.id))
     }
@@ -34,6 +39,7 @@ public struct StatusIcon: Equatable, Sendable {
     public func toolTip(appName: String) -> String {
         var lines = [appName]
         if symbol == "clock.badge.exclamationmark" { lines.append("The daemon is not running.") }
+        if running > 0 { lines.append(running == 1 ? "1 run is running." : "\(running) runs are running.") }
         if paused { lines.append("Paused: scheduled runs do not start.") }
         if warning { lines.append("The last run failed: \(failedJobs.joined(separator: ", "))") }
         return lines.joined(separator: "\n")

@@ -72,11 +72,17 @@ render "$ROOT/scripts/Info.plist.in" > "$APP/Contents/Info.plist"
 render "$ROOT/scripts/daemon.plist.in" > "$APP/Contents/Library/LaunchAgents/$daemon_label.plist"
 plutil -lint -s "$APP/Contents/Info.plist" "$APP/Contents/Library/LaunchAgents/$daemon_label.plist"
 
+# A suffixed instance gets the orange DEV icon, like its menu bar icon.
+icon_args=()
 icon_cache="$ROOT/build/AppIcon.icns"
+if [[ -n "$suffix" ]]; then
+    icon_args=(--dev)
+    icon_cache="$ROOT/build/AppIcon-dev.icns"
+fi
 if [[ ! -f "$icon_cache" || "$ROOT/scripts/make-icon.swift" -nt "$icon_cache" ]]; then
     lr_say "Drawing the icon"
     tmp="$(mktemp -d)"
-    swift "$ROOT/scripts/make-icon.swift" "$tmp/icon.png"
+    swift "$ROOT/scripts/make-icon.swift" "$tmp/icon.png" "${icon_args[@]}"
     mkdir "$tmp/AppIcon.iconset"
     for s in 16 32 128 256 512; do
         sips -z $s $s "$tmp/icon.png" --out "$tmp/AppIcon.iconset/icon_${s}x${s}.png" >/dev/null

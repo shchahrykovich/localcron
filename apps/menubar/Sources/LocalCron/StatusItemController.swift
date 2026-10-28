@@ -21,7 +21,9 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         super.init()
         // Semi-transient: the folder panel and alerts of this app do not
         // close it; a click in another app does.
-        popover.behavior = .semitransient
+        // Closes on a click anywhere outside, other apps included
+        // (.semitransient ignores clicks in other apps).
+        popover.behavior = .transient
         popover.delegate = self
         let main = MainView(perform: { [weak self] action in self?.perform(action, fromWindow: true) })
         let content = NSHostingController(rootView: main.environment(model).frame(width: 520, height: 600))
@@ -79,6 +81,12 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
         model.windowOpen = true
+    }
+
+    /// Stay open while an alert or the folder panel opened from the popover
+    /// runs: a click in it is outside the popover, but the user is not done.
+    func popoverShouldClose(_ popover: NSPopover) -> Bool {
+        NSApp.modalWindow == nil
     }
 
     func popoverDidClose(_ notification: Notification) {

@@ -1,0 +1,18 @@
+{
+  "id": 1,
+  "result": {
+    "canceled": false,
+    "run": {
+      "ended_at": "2026-10-28T11:02:53Z",
+      "exit_code": 0,
+      "id": "backup.1",
+      "job_id": "backup",
+      "log": "/Users/me/Library/Logs/LocalCron/runs/backup/backup.1.log",
+      "pid": 9487,
+      "queued_at": "2026-10-28T11:02:53Z",
+      "started_at": "2026-10-28T11:02:53Z",
+      "status": "succeeded",
+      "trigger": "manual"
+    }
+  }
+}

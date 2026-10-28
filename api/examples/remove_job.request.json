@@ -1,0 +1,7 @@
+{
+  "id": 1,
+  "method": "remove_job",
+  "params": {
+    "id": "backup"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "id": 1,
+  "result": {
+    "run": {
+      "id": "backup.2",
+      "job_id": "backup",
+      "queued_at": "2026-10-28T11:02:54Z",
+      "status": "queued",
+      "trigger": "manual"
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "id": 1,
+  "method": "set_job",
+  "params": {
+    "job": {
+      "id": "backup",
+      "schedule": "30 2 * * *",
+      "kind": "shell",
+      "command": "echo backing up; sleep 0.2",
+      "dir": "/Users/me/shop"
+    }
+  }
+}

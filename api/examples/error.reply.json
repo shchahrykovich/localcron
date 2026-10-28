@@ -1,0 +1,7 @@
+{
+  "id": 1,
+  "error": {
+    "code": "not_found",
+    "message": "no job \"nope\""
+  }
+}

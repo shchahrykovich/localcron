@@ -1,0 +1,8 @@
+{
+  "id": 1,
+  "method": "list_runs",
+  "params": {
+    "job_id": "backup",
+    "limit": 10
+  }
+}

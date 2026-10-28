@@ -1,0 +1,20 @@
+{
+  "id": 1,
+  "result": {
+    "api_version": "1.0",
+    "daemon_version": "0.1.0",
+    "data_dir": "/Users/me/Library/Application Support/LocalCron",
+    "enabled_jobs": 1,
+    "jobs": 2,
+    "logs_dir": "/Users/me/Library/Logs/LocalCron",
+    "max_concurrent": 3,
+    "next": {
+      "at": "2026-10-29T02:30:00Z",
+      "job_id": "backup"
+    },
+    "pid": 9450,
+    "queued": 0,
+    "running": 0,
+    "started_at": "2026-10-28T11:02:52Z"
+  }
+}

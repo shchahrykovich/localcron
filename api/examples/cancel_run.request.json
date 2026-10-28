@@ -1,0 +1,7 @@
+{
+  "id": 1,
+  "method": "cancel_run",
+  "params": {
+    "run_id": "backup.1"
+  }
+}

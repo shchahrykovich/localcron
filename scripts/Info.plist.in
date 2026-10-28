@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>@BUNDLE_ID@</string>
+    <key>CFBundleName</key>
+    <string>@APP_NAME@</string>
+    <key>CFBundleDisplayName</key>
+    <string>@APP_NAME@</string>
+    <key>LCInstanceSuffix</key>
+    <string>@SUFFIX@</string>
+    <key>CFBundleExecutable</key>
+    <string>LocalCron</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>@VERSION@</string>
+    <key>CFBundleVersion</key>
+    <string>@VERSION@</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>@MIN_MACOS@</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.developer-tools</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>Copyright © 2026 LocalCron. MIT License.</string>
+</dict>
+</plist>

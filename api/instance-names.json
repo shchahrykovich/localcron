@@ -1,0 +1,24 @@
+{
+  "release": {
+    "suffix": "",
+    "app_name": "LocalCron",
+    "bundle_id": "dev.localcron.app",
+    "daemon_label": "dev.localcron.app.daemon",
+    "daemon_program": "localcrond",
+    "cli": "localcron",
+    "note": "LocalCron.md",
+    "data_folder": "Library/Application Support/LocalCron",
+    "logs_folder": "Library/Logs/LocalCron"
+  },
+  "dev": {
+    "suffix": "-dev",
+    "app_name": "LocalCron-dev",
+    "bundle_id": "dev.localcron.app-dev",
+    "daemon_label": "dev.localcron.app-dev.daemon",
+    "daemon_program": "localcrond-dev",
+    "cli": "localcron-dev",
+    "note": "LocalCron-dev.md",
+    "data_folder": "Library/Application Support/LocalCron-dev",
+    "logs_folder": "Library/Logs/LocalCron-dev"
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "id": 1,
+  "result": {
+    "runs": [
+      {
+        "ended_at": "2026-10-28T11:02:55Z",
+        "exit_code": 0,
+        "id": "backup.2",
+        "job_id": "backup",
+        "log": "/Users/me/Library/Logs/LocalCron/runs/backup/backup.2.log",
+        "pid": 9489,
+        "queued_at": "2026-10-28T11:02:54Z",
+        "started_at": "2026-10-28T11:02:54Z",
+        "status": "succeeded",
+        "trigger": "manual"
+      },
+      {
+        "ended_at": "2026-10-28T11:02:53Z",
+        "exit_code": 0,
+        "id": "backup.1",
+        "job_id": "backup",
+        "log": "/Users/me/Library/Logs/LocalCron/runs/backup/backup.1.log",
+        "pid": 9487,
+        "queued_at": "2026-10-28T11:02:53Z",
+        "started_at": "2026-10-28T11:02:53Z",
+        "status": "succeeded",
+        "trigger": "manual"
+      }
+    ]
+  }
+}

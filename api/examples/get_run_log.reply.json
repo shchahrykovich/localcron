@@ -1,0 +1,20 @@
+{
+  "id": 1,
+  "result": {
+    "run": {
+      "ended_at": "2026-10-28T11:02:53Z",
+      "exit_code": 0,
+      "id": "backup.1",
+      "job_id": "backup",
+      "log": "/Users/me/Library/Logs/LocalCron/runs/backup/backup.1.log",
+      "pid": 9487,
+      "queued_at": "2026-10-28T11:02:53Z",
+      "started_at": "2026-10-28T11:02:53Z",
+      "status": "succeeded",
+      "trigger": "manual"
+    },
+    "size": 188,
+    "text": "# LocalCron run backup.1 started 2026-10-28T11:02:53+00:00\n# in /Users/me/shop\n# /bin/sh -c 'echo backing up; sleep 0.2'\n\nbacking up\n\n# 2026-10-28T11:02:53+00:00 Succeeded exit code 0 \n",
+    "truncated": false
+  }
+}

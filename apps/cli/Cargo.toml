@@ -1,0 +1,23 @@
+[package]
+name = "localcron"
+description = "LocalCron command-line tool and MCP server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+localcron-core.workspace = true
+anyhow.workspace = true
+chrono.workspace = true
+clap = { version = "4", features = ["derive"] }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { version = "1", features = ["rt", "macros", "io-std"] }
+rmcp = { version = "3", features = ["server", "transport-io", "macros"] }
+
+[dev-dependencies]
+rmcp = { version = "3", features = ["client", "transport-child-process"] }
+tempfile = "3"
+tokio = { version = "1", features = ["rt", "macros", "io-std", "process"] }

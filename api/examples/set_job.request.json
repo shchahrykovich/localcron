@@ -1,0 +1,25 @@
+{
+  "id": 1,
+  "method": "set_job",
+  "params": {
+    "job": {
+      "id": "weekly-review",
+      "schedule": "0 9 * * wed",
+      "kind": "claude",
+      "prompt": "Review the open pull requests and write a summary to notes/review.md",
+      "model": "sonnet",
+      "permission_mode": "acceptEdits",
+      "args": [
+        "--max-turns",
+        "30"
+      ],
+      "dir": "/Users/me/shop",
+      "env": {
+        "REVIEW_LIMIT": "10"
+      },
+      "timeout_secs": 1800,
+      "note": "asked for in chat"
+    },
+    "replace": false
+  }
+}

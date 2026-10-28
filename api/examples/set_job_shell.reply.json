@@ -1,0 +1,19 @@
+{
+  "id": 1,
+  "result": {
+    "created": true,
+    "job": {
+      "catch_up": true,
+      "command": "echo backing up; sleep 0.2",
+      "dir": "/Users/me/shop",
+      "enabled": true,
+      "id": "backup",
+      "kind": "shell",
+      "next_run": "2026-10-29T02:30:00Z",
+      "schedule": "30 2 * * *",
+      "schedule_text": "At 02:30",
+      "timeout_secs": 3600,
+      "updated_at": "2026-10-28T11:02:53Z"
+    }
+  }
+}

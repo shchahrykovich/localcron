@@ -1,0 +1,8 @@
+{
+  "id": 1,
+  "method": "preview_schedule",
+  "params": {
+    "schedule": "0 9 * * wed",
+    "count": 3
+  }
+}

@@ -1,0 +1,27 @@
+[workspace]
+# Listed one by one: a glob such as apps/* would also match apps/menubar,
+# which is a Swift package with no Cargo.toml.
+members = ["apps/daemon", "apps/cli", "libs/core"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+localcron-core = { path = "libs/core" }
+anyhow = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+[profile.release]
+# The daemon runs all day: keep it small.
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true

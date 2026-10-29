@@ -303,9 +303,12 @@ public struct Run: Codable, Equatable, Sendable, Identifiable {
     /// Absolute path of the output file.
     public var log: String?
     public var message: String
+    /// The command that opens the run's interactive console (tmux), while a
+    /// claude job runs in one.
+    public var console: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, trigger, status, pid, log, message
+        case id, trigger, status, pid, log, message, console
         case jobId = "job_id"
         case dueAt = "due_at"
         case queuedAt = "queued_at"
@@ -316,7 +319,7 @@ public struct Run: Codable, Equatable, Sendable, Identifiable {
 
     public init(id: String, jobId: String, trigger: Trigger, status: RunStatus, dueAt: String? = nil, queuedAt: String,
                 startedAt: String? = nil, endedAt: String? = nil, exitCode: Int32? = nil, pid: UInt32? = nil,
-                log: String? = nil, message: String = "") {
+                log: String? = nil, message: String = "", console: String? = nil) {
         self.id = id
         self.jobId = jobId
         self.trigger = trigger
@@ -329,6 +332,7 @@ public struct Run: Codable, Equatable, Sendable, Identifiable {
         self.pid = pid
         self.log = log
         self.message = message
+        self.console = console
     }
 
     public init(from decoder: Decoder) throws {
@@ -345,6 +349,7 @@ public struct Run: Codable, Equatable, Sendable, Identifiable {
         pid = try c.decodeIfPresent(UInt32.self, forKey: .pid)
         log = try c.decodeIfPresent(String.self, forKey: .log)
         message = try c.decodeIfPresent(String.self, forKey: .message) ?? ""
+        console = try c.decodeIfPresent(String.self, forKey: .console)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -361,6 +366,7 @@ public struct Run: Codable, Equatable, Sendable, Identifiable {
         try c.encodeIfPresent(pid, forKey: .pid)
         try c.encodeIfPresent(log, forKey: .log)
         if !message.isEmpty { try c.encode(message, forKey: .message) }
+        try c.encodeIfPresent(console, forKey: .console)
     }
 }
 

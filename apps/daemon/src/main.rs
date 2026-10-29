@@ -3,6 +3,7 @@
 //! Threads: the scheduler, the socket's accept loop, one per client
 //! connection, one per running job, and this one, which waits for SIGTERM.
 
+mod console;
 mod engine;
 mod lock;
 mod peer;

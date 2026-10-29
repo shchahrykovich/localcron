@@ -101,8 +101,15 @@ struct JobRow: View {
             if let active = job.activeRun {
                 VStack(alignment: .trailing, spacing: 4) {
                     StatusLabel(status: active.status).font(.caption)
-                    Button("Stop") { Task { await model.cancel(active) } }
-                        .controlSize(.small)
+                    HStack(spacing: 6) {
+                        if active.console != nil {
+                            Button("Open Terminal") { model.openTerminal(active) }
+                                .controlSize(.small)
+                                .help("Its Claude Code console: watch it and type into it")
+                        }
+                        Button("Stop") { Task { await model.cancel(active) } }
+                            .controlSize(.small)
+                    }
                 }
             } else {
                 Button {
@@ -124,6 +131,10 @@ struct JobRow: View {
                 Button("Allow Secrets…") { Task { await model.allowSecrets(job) } }
             }
             if let active = job.activeRun {
+                if let console = active.console {
+                    Button("Open Terminal") { model.openTerminal(active) }
+                    Button("Copy Terminal Command") { model.copy(console) }
+                }
                 Button("Stop \(active.id)") { Task { await model.cancel(active) } }
                 Button("Kill \(active.id) Now") { Task { await model.cancel(active, kill: true) } }
             }

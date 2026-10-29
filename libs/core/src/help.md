@@ -56,6 +56,7 @@ A new job runs in the current folder; `--dir` changes it.
 | `{{CLI}} remove ID` | Remove a job, its runs and logs |
 | `{{CLI}} enable ID`, `{{CLI}} disable ID` | Turn a job on or off |
 | `{{CLI}} run ID [--wait]` | Run now; `--wait` prints the output and exits with the run's code |
+| `{{CLI}} attach RUN` | Open the console of a running claude job, to watch it and type into it (needs tmux) |
 | `{{CLI}} cancel RUN [--kill]` | Stop a run: SIGTERM, then SIGKILL after 10 s; `--kill` at once |
 | `{{CLI}} pause`, `{{CLI}} resume` | Stop or start every schedule |
 | `{{CLI}} runs [ID]` | Recent runs, newest first |
@@ -145,6 +146,25 @@ new value when this one expires or leaks.
 - An agent run has nobody to approve its tools: a tool that needs approval
   is refused. Give `--permission-mode` or `--arg --allowedTools …` only for
   what you accept the job may do.
+
+## Watch an agent run in its console
+
+**Install tmux** (`brew install tmux`), and every `claude` job runs in a
+real Claude Code console that you can open while it works: you see what
+it does, and you can type into it when something goes wrong. Without tmux a
+claude job runs as before (`claude -p`): you see its output only at the end.
+
+- Open it: **Open Terminal** next to the running job in the menu bar app,
+  or `{{CLI}} attach RUN` (a run id, or the job's id) in any terminal.
+- Leave it with **Ctrl-B, then D**: the run goes on. Do not use Ctrl-C or
+  `/exit` unless you want to end the run.
+- The run ends when Claude finishes its answer and nobody has the console
+  open. When you are in it, it waits until you leave.
+- When Claude Code does not start its work within 90 s (a dialog waits, such
+  as "Do you trust the files in this folder?"), the run goes on without a
+  console; its log shows the screen. Open the folder once in Claude Code
+  and answer the dialog.
+- The log of the run gets the console's text at the end.
 
 ## Files
 

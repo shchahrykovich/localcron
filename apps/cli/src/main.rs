@@ -60,6 +60,13 @@ enum Command {
         #[arg(long)]
         wait: bool,
     },
+    /// Open the interactive console of a running claude job (needs tmux),
+    /// to watch it and type into it. Leave it with Ctrl-B then D: the run
+    /// goes on.
+    Attach {
+        /// A run id (weekly-review.12), or a job id for its running run.
+        run: String,
+    },
     /// Stop a queued or running run: SIGTERM, then SIGKILL after 10 s.
     Cancel {
         run_id: String,
@@ -326,6 +333,22 @@ fn run(cli: Cli, instance: &Instance, paths: &Paths) -> anyhow::Result<ExitCode>
                 (_, Some(code)) if (1..=255).contains(&code) => ExitCode::from(code as u8),
                 _ => ExitCode::FAILURE,
             });
+        }
+        Command::Attach { run } => {
+            let runs: ListRunsResult = client::call(&socket, "list_runs", ListRunsParams { job_id: None, limit: Some(1000) })?;
+            let found = runs.runs.iter().find(|r| r.id == run).or_else(|| runs.runs.iter().find(|r| r.job_id == run && !r.status.is_finished()));
+            let Some(found) = found else { bail!("no run or running job {run:?}") };
+            let Some(console) = &found.console else {
+                bail!(
+                    "{} has no console: it {}. A claude job gets one when tmux is installed (brew install tmux)",
+                    found.id,
+                    if found.status.is_finished() { "has ended" } else { "runs without one" }
+                );
+            };
+            eprintln!("Console of {}. Leave it with Ctrl-B then D; the run goes on.", found.id);
+            use std::os::unix::process::CommandExt;
+            let e = std::process::Command::new("/bin/sh").arg("-c").arg(format!("exec {console}")).exec();
+            bail!("cannot start tmux: {e}");
         }
         Command::Cancel { run_id, kill } => {
             let v = call("cancel_run", serde_json::to_value(CancelRunParams { run_id: run_id.clone(), force: kill })?)?;
@@ -660,7 +683,8 @@ fn print_run_line(run: &Run) {
         _ => String::new(),
     };
     let code = run.exit_code.map_or(String::new(), |c| format!(" exit {c}"));
-    println!("{:<30} {:<10} {started}{took}{code}{}", run.id, status_word(run.status), message_part(run));
+    let console = if run.console.is_some() { " (console: attach)" } else { "" };
+    println!("{:<30} {:<10} {started}{took}{code}{}{console}", run.id, status_word(run.status), message_part(run));
 }
 
 #[cfg(test)]

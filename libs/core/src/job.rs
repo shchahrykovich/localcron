@@ -188,6 +188,46 @@ impl Job {
         }
     }
 
+    /// A claude job in an interactive console (tmux): `claude` without `-p`,
+    /// the same options, no AskUserQuestion (nobody may answer), and hooks
+    /// that append `prompt` (the agent started) and `stop` (it finished its
+    /// answer) to the file in `$LOCALCRON_EVENTS`.
+    pub fn console_argv(&self) -> Vec<String> {
+        let mut args = vec!["claude".to_string()];
+        if let Some(model) = &self.model {
+            args.extend(["--model".into(), model.clone()]);
+        }
+        if let Some(mode) = &self.permission_mode {
+            args.extend(["--permission-mode".into(), mode.clone()]);
+        }
+        args.extend(self.args.iter().cloned());
+        let event = |name: &str| serde_json::json!([{"hooks": [{"type": "command", "command": format!("printf '{name}\\n' >> \"$LOCALCRON_EVENTS\"")}]}]);
+        let settings = serde_json::json!({"hooks": {"UserPromptSubmit": event("prompt"), "Stop": event("stop")}});
+        args.extend(["--disallowedTools".into(), "AskUserQuestion".into(), "--settings".into(), settings.to_string()]);
+        args.push(self.prompt.clone().unwrap_or_default());
+        args
+    }
+
+    /// One line for the run header of a console run: without the hook
+    /// settings, which say nothing to a person.
+    pub fn console_command_line(&self) -> String {
+        let args = self.console_argv();
+        let mut shown = Vec::new();
+        let mut skip = false;
+        for a in &args {
+            if skip {
+                skip = false;
+                continue;
+            }
+            if a == "--settings" {
+                skip = true;
+                continue;
+            }
+            shown.push(quote(a));
+        }
+        format!("{} (in a console)", shown.join(" "))
+    }
+
     /// What the user allows when a job may read its secrets: everything that
     /// decides what the run does with them. A change to any of it needs a new
     /// approval; the schedule, timeout, note and on/off do not.
@@ -349,6 +389,24 @@ mod tests {
         ] {
             assert_ne!(changed.secret_scope(), scope);
         }
+    }
+
+    #[test]
+    fn the_console_runs_claude_without_print_and_with_hooks() {
+        let args = claude_job().console_argv();
+        assert_eq!(&args[..5], ["claude", "--model", "sonnet", "--permission-mode", "acceptEdits"]);
+        assert!(!args.contains(&"-p".to_string()));
+        assert_eq!(args.last().unwrap(), "Review open PRs", "the prompt is last");
+        let i = args.iter().position(|a| a == "--settings").unwrap();
+        let settings: serde_json::Value = serde_json::from_str(&args[i + 1]).unwrap();
+        assert_eq!(settings["hooks"]["Stop"][0]["hooks"][0]["command"], "printf 'stop\\n' >> \"$LOCALCRON_EVENTS\"");
+        assert_eq!(settings["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"], "printf 'prompt\\n' >> \"$LOCALCRON_EVENTS\"");
+        assert!(args.windows(2).any(|w| w == ["--disallowedTools", "AskUserQuestion"]));
+        assert!(args.windows(2).any(|w| w == ["--max-turns", "20"]), "the job's own arguments");
+        assert_eq!(
+            claude_job().console_command_line(),
+            "claude --model sonnet --permission-mode acceptEdits --max-turns 20 --disallowedTools AskUserQuestion 'Review open PRs' (in a console)"
+        );
     }
 
     #[test]

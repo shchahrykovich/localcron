@@ -97,6 +97,14 @@ Five fields in local time: `minute hour day-of-month month day-of-week`.
 When both day-of-month and day-of-week are set, a day matches if either one
 matches, as in classic cron.
 
+## Watch an agent run
+
+With tmux installed (`brew install tmux`), every `claude` job runs in a real
+Claude Code console that you can open while it works and type into: **Open
+Terminal** in the app, or `localcron attach RUN` (a run or job id). Leave
+with Ctrl-B, then D; the run goes on. Without tmux a claude job runs as
+`claude -p`, as before.
+
 ## How runs get their environment
 
 launchd starts the daemon with a short PATH, where `claude`, `codex` and

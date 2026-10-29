@@ -30,6 +30,11 @@ impl Daemon {
     }
 
     fn start_with(home: tempfile::TempDir, trust_peers: bool) -> Self {
+        Self::start_env(home, trust_peers, &[])
+    }
+
+    /// `extra` comes last, so it can replace LOCALCRON_PATH.
+    fn start_env(home: tempfile::TempDir, trust_peers: bool, extra: &[(&str, String)]) -> Self {
         let child = Command::new(env!("CARGO_BIN_EXE_localcrond"))
             .env("LOCALCRON_TEST_TRUST_PEERS", if trust_peers { "1" } else { "0" })
             .env("LOCALCRON_HOME", home.path())
@@ -39,6 +44,7 @@ impl Daemon {
             .env("SHELL", "/bin/sh")
             // Never the login keychain.
             .env("LOCALCRON_TEST_KEYCHAIN", home.path().join("test.keychain"))
+            .envs(extra.iter().map(|(k, v)| (*k, v)))
             .spawn()
             .unwrap();
         let d = Daemon { child, home };
@@ -538,4 +544,98 @@ fn a_job_nobody_allowed_cannot_read_a_secret() {
     let shown = d.ok("get_job", json!({"id": "leak"}))["job"].clone();
     let e = d.call("allow_job_secrets", json!({"job": shown})).unwrap_err();
     assert_eq!(e["code"], "not_allowed", "{e}");
+}
+
+/// A stand-in for Claude Code: `-p` prints and ends; the console form plays
+/// what $FAKE_CLAUDE says and then waits, as an interactive session does.
+const FAKE_CLAUDE: &str = r#"#!/bin/sh
+if [ "$1" = "-p" ]; then echo "run without a console"; exit 0; fi
+case "$FAKE_CLAUDE" in
+  dialog) echo "Do you trust the files in this folder?" ;;
+  long) printf 'prompt\n' >> "$LOCALCRON_EVENTS"; echo "fake claude busy"; touch fake-started ;;
+  *) printf 'prompt\n' >> "$LOCALCRON_EVENTS"; echo "fake claude working"; echo "args: $*"; printf 'stop\n' >> "$LOCALCRON_EVENTS" ;;
+esac
+sleep 60
+"#;
+
+/// A daemon whose PATH has the fake claude and the real tmux; None without
+/// tmux. `grace_ms`: how long claude may take to start in the console.
+fn console_daemon(grace_ms: u64) -> Option<Daemon> {
+    let tmux = ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux"].into_iter().find(|p| Path::new(p).exists())?;
+    let home = tempfile::Builder::new().prefix("lc").tempdir_in("/tmp").unwrap();
+    let bin = home.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    std::fs::write(bin.join("claude"), FAKE_CLAUDE).unwrap();
+    std::os::unix::fs::symlink(tmux, bin.join("tmux")).unwrap();
+    std::process::Command::new("chmod").arg("+x").arg(bin.join("claude")).status().unwrap();
+    let path = format!("{}:/usr/bin:/bin", bin.display());
+    Some(Daemon::start_env(home, false, &[("LOCALCRON_PATH", path), ("LOCALCRON_TEST_CONSOLE_GRACE_MS", grace_ms.to_string())]))
+}
+
+fn claude_job(d: &Daemon, id: &str, mode: &str) -> Value {
+    json!({"id": id, "schedule": "@daily", "kind": "claude", "prompt": "write the article", "dir": d.dir(), "env": {"FAKE_CLAUDE": mode}})
+}
+
+fn console_server_alive(console: &str) -> bool {
+    // "<tmux> -L <label> attach -t run": ask that server for the session.
+    let parts: Vec<&str> = console.split(' ').collect();
+    Command::new(parts[0]).args(["-L", parts[2], "has-session", "-t", "run"]).stderr(std::process::Stdio::null()).status().unwrap().success()
+}
+
+#[test]
+fn with_tmux_a_claude_job_runs_in_a_console_the_user_can_open() {
+    let Some(d) = console_daemon(20_000) else { return eprintln!("no tmux: skipped") };
+    d.ok("set_job", json!({"job": claude_job(&d, "article", "work")}));
+    let run = d.ok("run_job", json!({"id": "article"}))["run"]["id"].as_str().unwrap().to_string();
+    let mut console = String::new();
+    wait_for(
+        || {
+            let r = d.run(&run);
+            console = r["console"].as_str().unwrap_or_default().to_string();
+            !console.is_empty() || r["status"] == "succeeded"
+        },
+        "the console",
+    );
+    assert!(console.contains(" -L localcron-article.") && console.ends_with(" attach -t run"), "{console}");
+    let done = d.wait_status(&run, "succeeded");
+    assert!(done.get("console").is_none(), "the console is gone after the run: {done}");
+    assert!(!console_server_alive(&console), "the tmux server is still there");
+    let log = d.ok("get_run_log", json!({"run_id": run}))["text"].as_str().unwrap().to_string();
+    assert!(log.contains("# in a console; open it with:") && log.contains("fake claude working"), "{log}");
+    assert!(log.contains("--disallowedTools AskUserQuestion") && !log.contains("args: -p"), "{log}");
+    assert!(log.contains("# claude --disallowedTools AskUserQuestion 'write the article' (in a console)"), "the header: {log}");
+    assert!(!log.contains("run without a console"), "{log}");
+}
+
+#[test]
+fn a_console_stuck_at_a_dialog_runs_the_job_without_one() {
+    let Some(d) = console_daemon(1500) else { return eprintln!("no tmux: skipped") };
+    d.ok("set_job", json!({"job": claude_job(&d, "stuck", "dialog")}));
+    let run = d.ok("run_job", json!({"id": "stuck"}))["run"]["id"].as_str().unwrap().to_string();
+    d.wait_status(&run, "succeeded");
+    let log = d.ok("get_run_log", json!({"run_id": run}))["text"].as_str().unwrap().to_string();
+    assert!(log.contains("Do you trust the files in this folder?"), "the screen is in the log: {log}");
+    assert!(log.contains("did not start its work in the console") && log.contains("run without a console"), "{log}");
+}
+
+#[test]
+fn canceling_a_console_run_closes_the_console() {
+    let Some(d) = console_daemon(20_000) else { return eprintln!("no tmux: skipped") };
+    d.ok("set_job", json!({"job": claude_job(&d, "busy", "long")}));
+    let run = d.ok("run_job", json!({"id": "busy"}))["run"]["id"].as_str().unwrap().to_string();
+    let mut console = String::new();
+    wait_for(
+        || {
+            console = d.run(&run)["console"].as_str().unwrap_or_default().to_string();
+            !console.is_empty() && d.run(&run)["pid"].is_number()
+        },
+        "the console",
+    );
+    // Cancel while claude works, not before it printed anything.
+    wait_for(|| d.home.path().join("fake-started").exists(), "the fake claude to start");
+    assert_eq!(d.ok("cancel_run", json!({"run_id": run}))["canceled"], true);
+    d.wait_status(&run, "canceled");
+    assert!(!console_server_alive(&console), "the tmux server is still there");
+    let log = d.ok("get_run_log", json!({"run_id": run}))["text"].as_str().unwrap().to_string();
+    assert!(log.contains("fake claude busy") && !log.contains("run without a console"), "{log}");
 }

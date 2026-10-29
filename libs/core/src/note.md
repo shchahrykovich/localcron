@@ -106,6 +106,10 @@ nobody there.
   previous one is still queued or running is skipped.
 - A run is stopped after `timeout_secs` (default 3600).
 - Output goes to a log file per run. Read it with `get_run_log`.
+- With tmux installed, a `claude` run works in a console the user can open
+  and type into (`{{CLI}} attach RUN`, or Open Terminal in the app). Its
+  log gets the console's text at the end. Tell the user about it when they
+  want to watch a run; suggest `brew install tmux` when they do not have it.
 - Runs use the PATH of the user's login shell, so `claude`, `codex`, `node`
   and `git` are found as in a terminal.
 

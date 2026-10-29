@@ -406,6 +406,23 @@ final class AppModel {
         }
     }
 
+    /// The run's interactive console, in Terminal.
+    func openTerminal(_ run: Run) {
+        guard let command = run.console else {
+            say("\(run.id) has no console: it runs without one, or it has ended. Claude jobs get one when tmux is installed.",
+                failed: true)
+            return
+        }
+        do {
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("\(Instance.current.appName)-consoles")
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            NSWorkspace.shared.open(try ConsoleScript.write(runID: run.id, command: command, in: dir))
+            say("The console of \(run.id) opens in Terminal. Leave it with Ctrl-B, then D: the run goes on.")
+        } catch {
+            say("Could not open the console of \(run.id): \(error.localizedDescription)", failed: true)
+        }
+    }
+
     func openLogInConsole(_ run: Run) {
         guard let path = run.log else { return }
         let console = URL(fileURLWithPath: "/System/Applications/Utilities/Console.app")

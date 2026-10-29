@@ -231,3 +231,15 @@ fn a_secret_from_a_path_in_a_json_or_ini_file() {
     let (ok, _, err, _) = d.cli_with_stdin(&["secret", "set", "x", "--key", "a", "--format", "yaml"], "a: 1");
     assert!(!ok && err.contains("env, json or ini"), "{err}");
 }
+
+#[test]
+fn attach_explains_a_run_without_a_console() {
+    let d = Daemon::start();
+    d.cli(&["add", "plain", "--schedule", "@daily", "--command", "sleep 5"]);
+    let (ok, _, _, _) = d.cli(&["run", "plain"]);
+    assert!(ok);
+    let (ok, _, err, _) = d.cli(&["attach", "plain"]);
+    assert!(!ok && err.contains("has no console") && err.contains("brew install tmux"), "{err}");
+    let (ok, _, err, _) = d.cli(&["attach", "nothing"]);
+    assert!(!ok && err.contains("no run or running job"), "{err}");
+}

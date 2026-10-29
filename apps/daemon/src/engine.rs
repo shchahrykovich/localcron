@@ -9,6 +9,7 @@
 //! ```
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::unix::ffi::OsStrExt;
@@ -26,12 +27,13 @@ use localcron_core::api::{
     StatusResult,
 };
 use localcron_core::instance::Instance;
-use localcron_core::job::Job;
+use localcron_core::job::{Job, JobKind};
 use localcron_core::paths::Paths;
 use localcron_core::run::{Run, RunStatus, Trigger};
 use localcron_core::schedule::Schedule;
 use localcron_core::secret;
 
+use crate::console::{self, Console, Pane};
 use crate::log;
 use crate::peer::{AppCheck, Trust};
 use crate::secrets::{Keychain, ReadError};
@@ -304,6 +306,7 @@ impl Engine {
             pid: None,
             log: None,
             message: String::new(),
+            console: None,
         };
         if let Some(busy) = st.runs.iter().find(|r| r.job_id == job_id && !r.status.is_finished()) {
             run.status = RunStatus::Skipped;
@@ -350,7 +353,11 @@ impl Engine {
     /// The run thread: start the process, wait for it, record the end.
     fn execute(self: &Arc<Self>, run_id: &str, job: &Job, log_path: &Path) {
         let env = self.shell_env.get();
-        let command_line = job.command_line(&env.shell);
+        // With tmux, a claude job runs in a console the user can open.
+        let tmux = (job.kind == JobKind::Claude && console::find("claude", &env.path).is_some())
+            .then(|| console::find("tmux", &env.path))
+            .flatten();
+        let command_line = if tmux.is_some() { job.console_command_line() } else { job.command_line(&env.shell) };
         let mut file = match open_log(log_path) {
             Ok(f) => f,
             Err(e) => return self.finish(run_id, None, format!("cannot open the log file {}: {e}", log_path.display())),
@@ -367,6 +374,30 @@ impl Engine {
             let names: Vec<String> = job.secret_env.iter().map(|(var, name)| format!("{var} from {name}")).collect();
             let _ = writeln!(file, "# secrets: {}\n", names.join(", "));
         }
+        // read_secrets gives the values in the order of secret_env.
+        let values: Vec<(&str, &[u8])> =
+            job.secret_env.values().map(String::as_str).zip(secret_env.iter().map(|(_, v)| v.as_bytes())).collect();
+        let mut run_env: Vec<(OsString, OsString)> = vec![
+            ("PATH".into(), env.path.clone().into()),
+            ("SHELL".into(), env.shell.clone().into()),
+            ("LOCALCRON_JOB_ID".into(), job.id.clone().into()),
+            ("LOCALCRON_RUN_ID".into(), run_id.into()),
+        ];
+        if std::env::var_os("LANG").is_none() {
+            run_env.push(("LANG".into(), "en_US.UTF-8".into()));
+        }
+        run_env.extend(job.env.iter().map(|(k, v)| (k.into(), v.into())));
+        run_env.extend(secret_env.iter().map(|(k, v)| (k.into(), v.clone())));
+
+        if let Some(tmux) = tmux
+            && let Some((code, message)) = self.run_in_console(run_id, job, log_path, &mut file, tmux, &run_env)
+        {
+            if let Err(e) = scrub_file(log_path, &values) {
+                log!("run {run_id}: cannot hide the secrets in its log: {e}");
+            }
+            return self.finish(run_id, code, message);
+        }
+
         let (program, args) = job.argv(&env.shell);
         let (Ok(out), Ok(err)) = (file.try_clone(), file.try_clone()) else {
             return self.finish(run_id, None, "cannot share the log file with the process".into());
@@ -378,18 +409,10 @@ impl Engine {
             .stdin(Stdio::null())
             .stdout(out)
             .stderr(err)
-            .env("PATH", &env.path)
-            .env("SHELL", &env.shell)
-            .env("LOCALCRON_JOB_ID", &job.id)
-            .env("LOCALCRON_RUN_ID", run_id)
-            .envs(&job.env)
-            .envs(secret_env.iter().map(|(k, v)| (k, v)))
+            .envs(run_env.iter().map(|(k, v)| (k, v)))
             // Its own process group: a stop reaches every process it starts.
             .process_group(0);
         crate::unblock_signals_in_child(&mut command);
-        if std::env::var_os("LANG").is_none() {
-            command.env("LANG", "en_US.UTF-8");
-        }
         let mut child = match command.spawn() {
             Ok(child) => child,
             Err(e) => {
@@ -415,9 +438,6 @@ impl Engine {
         // A stop that came before the pid was known.
         self.notify();
         let status = child.wait();
-        // read_secrets gives the values in the order of secret_env.
-        let values: Vec<(&str, &[u8])> =
-            job.secret_env.values().map(String::as_str).zip(secret_env.iter().map(|(_, v)| v.as_bytes())).collect();
         if let Err(e) = scrub_file(log_path, &values) {
             log!("run {run_id}: cannot hide the secrets in its log: {e}");
         }
@@ -431,6 +451,78 @@ impl Engine {
         };
         let code = status.ok().and_then(|s| s.code());
         self.finish(run_id, code, message);
+    }
+
+    /// A claude job in a tmux console (see console.rs). None when claude did
+    /// not start its work there: the caller runs it without a console.
+    /// Otherwise the exit code and message for `finish`.
+    fn run_in_console(
+        &self,
+        run_id: &str,
+        job: &Job,
+        log_path: &Path,
+        file: &mut File,
+        tmux: std::path::PathBuf,
+        run_env: &[(OsString, OsString)],
+    ) -> Option<(Option<i32>, String)> {
+        let console = Console::new(tmux, format!("{}-{run_id}", self.instance.cli()));
+        let events = log_path.with_extension("events");
+        let _ = fs::remove_file(&events);
+        let mut env = run_env.to_vec();
+        env.push(("LOCALCRON_EVENTS".into(), events.clone().into()));
+        if let Err(e) = console.start(&job.console_argv(), &job.dir, &env) {
+            let _ = writeln!(file, "# no console: {e}\n");
+            return None;
+        }
+        let attach = console.attach_command();
+        let pid = console.pid();
+        {
+            let mut st = self.lock();
+            if let Some(active) = st.running.get_mut(run_id) {
+                active.pid = pid;
+            }
+            if let Some(run) = st.runs.iter_mut().find(|r| r.id == run_id) {
+                run.pid = pid;
+                run.console = Some(attach.clone());
+            }
+            self.save_runs(&st);
+        }
+        // A stop that came before the pid was known.
+        self.notify();
+        let _ = writeln!(file, "# in a console; open it with: {attach}\n");
+        let started_at = Instant::now();
+        let grace = console::grace();
+        let result = loop {
+            std::thread::sleep(console::tick());
+            let (started, finished) = console::events(&events);
+            let stopping = self.lock().running.get(run_id).is_none_or(|a| a.stop.is_some());
+            match console.pane() {
+                Pane::Gone if started || stopping => break Some((None, "the console was closed".to_string())),
+                Pane::Dead(status) if started || stopping => break Some((if finished { Some(0) } else { status }, String::new())),
+                // Claude ended before it started: the run without a console says why.
+                Pane::Gone | Pane::Dead(_) => break None,
+                Pane::Alive if !started && !stopping && started_at.elapsed() > grace => break None,
+                Pane::Alive if finished && !console.attached() => break Some((Some(0), String::new())),
+                Pane::Alive => {}
+            }
+        };
+        let screen = console.screen();
+        console.close();
+        let _ = fs::remove_file(&events);
+        let _ = writeln!(file, "# the console at the end:\n{screen}\n");
+        if result.is_none() {
+            let _ = writeln!(
+                file,
+                "# Claude Code did not start its work in the console. A dialog may wait there, such as \"trust this \
+                 folder?\": open the folder once in Claude Code and answer it. This run goes on without a console.\n"
+            );
+        }
+        let mut st = self.lock();
+        if let Some(run) = st.runs.iter_mut().find(|r| r.id == run_id) {
+            run.console = None;
+        }
+        self.save_runs(&st);
+        result
     }
 
     /// The values of the job's `secret_env`, read from the Keychain without

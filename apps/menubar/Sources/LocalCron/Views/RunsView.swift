@@ -105,7 +105,11 @@ struct RunLogView: View {
                     if let seconds = log.run.seconds { Text(Formatting.duration(seconds)).font(.caption) }
                     Spacer()
                     Button("Reveal in Finder") { model.revealLog(log.run) }.controlSize(.small)
-                    Button("Open in Console") { model.openLogInConsole(log.run) }.controlSize(.small)
+                    if log.run.console != nil {
+                        Button("Open Terminal") { model.openTerminal(log.run) }.controlSize(.small)
+                            .help("The run's Claude Code console: watch it and type into it")
+                    }
+                    Button("Open in Console.app") { model.openLogInConsole(log.run) }.controlSize(.small)
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)

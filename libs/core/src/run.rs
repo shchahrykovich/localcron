@@ -64,4 +64,8 @@ pub struct Run {
     /// Why it failed, was skipped or stopped.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub message: String,
+    /// The command that opens the run's interactive console (tmux), while a
+    /// claude job runs in one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub console: Option<String>,
 }

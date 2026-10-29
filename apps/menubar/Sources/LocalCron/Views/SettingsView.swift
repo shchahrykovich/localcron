@@ -6,6 +6,7 @@ struct SettingsView: View {
     let perform: (AppMenu.Action) -> Void
     @State private var openAtLogin = OpenAtLogin().isOn
     @AppStorage("autoUpdate") private var autoUpdate = true
+    @AppStorage(ConsoleTerminal.defaultsKey) private var consoleTerminal = ""
 
     var body: some View {
         Form {
@@ -54,6 +55,13 @@ struct SettingsView: View {
                     Button(note) { model.openLoginItems() }.buttonStyle(.link)
                 }
                 Toggle("Check for updates automatically", isOn: $autoUpdate)
+                if model.kittyURL != nil {
+                    Picker("Open run consoles in", selection: Binding(
+                        get: { ConsoleTerminal.chosen(saved: consoleTerminal, kittyInstalled: true) },
+                        set: { consoleTerminal = $0.rawValue })) {
+                        ForEach(ConsoleTerminal.allCases) { Text($0.title).tag($0) }
+                    }
+                }
                 HStack {
                     Text("Version \(model.version)")
                     Spacer()

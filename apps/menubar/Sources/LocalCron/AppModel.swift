@@ -406,11 +406,30 @@ final class AppModel {
         }
     }
 
-    /// The run's interactive console, in Terminal.
+    var kittyURL: URL? { NSWorkspace.shared.urlForApplication(withBundleIdentifier: ConsoleTerminal.kittyBundleID) }
+
+    /// Settings saves the choice (@AppStorage); read at each open.
+    var consoleTerminal: ConsoleTerminal {
+        ConsoleTerminal.chosen(saved: UserDefaults.standard.string(forKey: ConsoleTerminal.defaultsKey), kittyInstalled: kittyURL != nil)
+    }
+
+    /// The run's interactive console, in kitty or Terminal.
     func openTerminal(_ run: Run) {
         guard let command = run.console else {
             say("\(run.id) has no console: it runs without one, or it has ended. Claude jobs get one when tmux is installed.",
                 failed: true)
+            return
+        }
+        if consoleTerminal == .kitty, let kitty = kittyURL {
+            let process = Process()
+            process.executableURL = kitty.appendingPathComponent("Contents/MacOS/kitty")
+            process.arguments = ConsoleTerminal.kittyArguments(command: command, runID: run.id)
+            do {
+                try process.run()
+                say("The console of \(run.id) opens in kitty. Leave it with Ctrl-B, then D: the run goes on.")
+            } catch {
+                say("Could not open kitty: \(error.localizedDescription)", failed: true)
+            }
             return
         }
         do {
@@ -554,7 +573,7 @@ final class AppModel {
         }
         let running = activeRuns.map { run in
             let detail = run.status == .queued ? "queued" : run.seconds.map { "running for \(Formatting.duration($0))" }
-            return AppMenu.RunEntry(runID: run.id, jobID: run.jobId, detail: detail)
+            return AppMenu.RunEntry(runID: run.id, jobID: run.jobId, detail: detail, console: run.console != nil)
         }
         let failed = status == nil ? [] : jobs.compactMap { job -> AppMenu.RunEntry? in
             guard let last = job.lastRun, last.status.isFailure else { return nil }

@@ -8,6 +8,8 @@ public enum AppMenu {
         /// Pause (true) or resume (false) every schedule.
         case setPaused(Bool)
         case stopRun(String), stopAllRuns
+        /// Open the console of a running run (by run id) in a terminal.
+        case openTerminal(String)
         case showLog(String)
         /// Ask the user to allow the job (by id) to read its secrets.
         case allowSecrets(String)
@@ -43,11 +45,14 @@ public enum AppMenu {
         public var jobID: String
         /// "running for 2 min", "exit 2".
         public var detail: String?
+        /// It runs in a console the user can open.
+        public var console: Bool
 
-        public init(runID: String, jobID: String, detail: String?) {
+        public init(runID: String, jobID: String, detail: String?, console: Bool = false) {
             self.runID = runID
             self.jobID = jobID
             self.detail = detail
+            self.console = console
         }
     }
 
@@ -113,6 +118,10 @@ public enum AppMenu {
             entries.append(.separator)
             entries.append(.header("Running"))
             for run in c.running {
+                if run.console {
+                    entries.append(.item(Item(title: "Open Terminal for \(run.jobID)", symbol: "terminal", action: .openTerminal(run.runID),
+                                              detail: "Watch it and type into it; closing the terminal leaves it running")))
+                }
                 entries.append(.item(Item(title: "Stop \(run.jobID)", symbol: "stop.circle", action: .stopRun(run.runID),
                                           detail: run.detail)))
             }

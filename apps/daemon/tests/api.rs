@@ -577,9 +577,9 @@ fn claude_job(d: &Daemon, id: &str, mode: &str) -> Value {
 }
 
 fn console_server_alive(console: &str) -> bool {
-    // "<tmux> -L <label> attach -t run": ask that server for the session.
+    // "<tmux> -L <label> attach": ask that server for a session.
     let parts: Vec<&str> = console.split(' ').collect();
-    Command::new(parts[0]).args(["-L", parts[2], "has-session", "-t", "run"]).stderr(std::process::Stdio::null()).status().unwrap().success()
+    Command::new(parts[0]).args(["-L", parts[2], "has-session"]).stderr(std::process::Stdio::null()).status().unwrap().success()
 }
 
 #[test]
@@ -596,7 +596,8 @@ fn with_tmux_a_claude_job_runs_in_a_console_the_user_can_open() {
         },
         "the console",
     );
-    assert!(console.contains(" -L localcron-article.") && console.ends_with(" attach -t run"), "{console}");
+    // Named after the job, so `tmux -L localcron-article attach` opens it.
+    assert!(console.ends_with("/tmux -L localcron-article attach"), "{console}");
     let done = d.wait_status(&run, "succeeded");
     assert!(done.get("console").is_none(), "the console is gone after the run: {done}");
     assert!(!console_server_alive(&console), "the tmux server is still there");
@@ -638,4 +639,20 @@ fn canceling_a_console_run_closes_the_console() {
     assert!(!console_server_alive(&console), "the tmux server is still there");
     let log = d.ok("get_run_log", json!({"run_id": run}))["text"].as_str().unwrap().to_string();
     assert!(log.contains("fake claude busy") && !log.contains("run without a console"), "{log}");
+}
+
+#[test]
+fn a_console_left_from_a_lost_run_is_replaced() {
+    let Some(d) = console_daemon(20_000) else { return eprintln!("no tmux: skipped") };
+    let tmux = d.home.path().join("bin/tmux");
+    // As if LocalCron stopped during a run of this job: its server lives on.
+    let old = Command::new(&tmux).args(["-L", "localcron-leftover", "-f", "/dev/null", "new-session", "-d", "-s", "old", "sleep", "60"]).status().unwrap();
+    assert!(old.success());
+    d.ok("set_job", json!({"job": claude_job(&d, "leftover", "work")}));
+    let run = d.ok("run_job", json!({"id": "leftover"}))["run"]["id"].as_str().unwrap().to_string();
+    d.wait_status(&run, "succeeded");
+    let alive = Command::new(&tmux).args(["-L", "localcron-leftover", "has-session", "-t", "old"]).stderr(std::process::Stdio::null()).status().unwrap();
+    assert!(!alive.success(), "the old console is still there");
+    let log = d.ok("get_run_log", json!({"run_id": run}))["text"].as_str().unwrap().to_string();
+    assert!(log.contains("fake claude working"), "{log}");
 }

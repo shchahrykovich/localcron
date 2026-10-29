@@ -8,7 +8,9 @@
 //!     └──────────────────────────── events file ◄───────── "prompt" / "stop" ┘
 //! ```
 //!
-//! Each run has its own tmux server, so the run's environment (secrets too)
+//! Each running job has its own tmux server, named after the job
+//! (`tmux -L localcron-weekly-review attach` opens it, no LocalCron needed):
+//! a job never runs twice at once. The run's environment (secrets too)
 //! reaches claude as the server's environment, never on a command line. The
 //! user's ~/.tmux.conf is not read.
 //!
@@ -26,7 +28,6 @@ use std::time::Duration;
 /// How long claude may take to start its work in the console.
 const GRACE: Duration = Duration::from_secs(90);
 const TICK: Duration = Duration::from_millis(300);
-const SESSION: &str = "run";
 
 pub fn grace() -> Duration {
     if cfg!(debug_assertions)
@@ -61,18 +62,21 @@ pub enum Pane {
 
 pub struct Console {
     tmux: PathBuf,
+    /// The tmux server: `localcron-dev-weekly-review`.
     label: String,
+    /// The session: the job id.
+    session: String,
 }
 
 impl Console {
-    /// `label` names the tmux server: `localcron-dev-weekly-review.12`.
-    pub fn new(tmux: PathBuf, label: String) -> Self {
-        Self { tmux, label }
+    /// The console of a job of an instance (`cli`: `localcron`, `localcron-dev`).
+    pub fn new(tmux: PathBuf, cli: &str, job_id: &str) -> Self {
+        Self { tmux, label: format!("{cli}-{job_id}"), session: job_id.to_string() }
     }
 
     /// The command that opens the console in a terminal.
     pub fn attach_command(&self) -> String {
-        format!("{} -L {} attach -t {SESSION}", self.tmux.display(), self.label)
+        format!("{} -L {} attach", self.tmux.display(), self.label)
     }
 
     fn command(&self) -> Command {
@@ -84,10 +88,15 @@ impl Console {
     /// Start `argv` in a new detached session of a new server, in `dir`, with
     /// `env`. The pane stays after claude ends, so its screen can be saved.
     pub fn start(&self, argv: &[String], dir: &str, env: &[(OsString, OsString)]) -> Result<(), String> {
+        // A server of an earlier run that LocalCron lost (it stopped during
+        // the run) would keep its old environment: close it first.
+        if self.query(&["has-session"]).is_some() {
+            self.close();
+        }
         let mut command = self.command();
         command
             .args(["-f", "/dev/null", "start-server", ";", "set", "-g", "history-limit", "100000", ";"])
-            .args(["set", "-g", "remain-on-exit", "on", ";", "new-session", "-d", "-s", SESSION, "-x", "200", "-y", "50", "-c", dir, "--"])
+            .args(["set", "-g", "remain-on-exit", "on", ";", "new-session", "-d", "-s", &self.session, "-x", "200", "-y", "50", "-c", dir, "--"])
             .args(argv)
             .env_remove("TMUX")
             .env("TERM", "xterm-256color")
@@ -108,11 +117,11 @@ impl Console {
     /// The pid of claude: the first process of the pane, in its own process
     /// group, so a stop reaches what it starts.
     pub fn pid(&self) -> Option<u32> {
-        self.query(&["display", "-p", "-t", SESSION, "#{pane_pid}"])?.parse().ok()
+        self.query(&["display", "-p", "-t", &self.session, "#{pane_pid}"])?.parse().ok()
     }
 
     pub fn pane(&self) -> Pane {
-        match self.query(&["display", "-p", "-t", SESSION, "#{pane_dead} #{pane_dead_status}"]) {
+        match self.query(&["display", "-p", "-t", &self.session, "#{pane_dead} #{pane_dead_status}"]) {
             None => Pane::Gone,
             Some(text) => match text.split_once(' ') {
                 Some(("1", status)) => Pane::Dead(status.parse().ok()),
@@ -124,13 +133,13 @@ impl Console {
 
     /// Someone has the console open.
     pub fn attached(&self) -> bool {
-        self.query(&["list-clients", "-t", SESSION]).is_some_and(|out| !out.is_empty())
+        self.query(&["list-clients", "-t", &self.session]).is_some_and(|out| !out.is_empty())
     }
 
     /// The screen and its history, as text. A full-screen program leaves
     /// many empty lines: a run of them becomes one.
     pub fn screen(&self) -> String {
-        squeeze(&self.query(&["capture-pane", "-p", "-J", "-S", "-", "-t", SESSION]).unwrap_or_default())
+        squeeze(&self.query(&["capture-pane", "-p", "-J", "-S", "-", "-t", &self.session]).unwrap_or_default())
     }
 
     /// Close the console: claude gets SIGHUP when it still runs. tmux leaves

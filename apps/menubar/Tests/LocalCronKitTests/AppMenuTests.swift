@@ -77,4 +77,21 @@ final class AppMenuTests: XCTestCase {
         XCTAssertTrue(items.contains { $0.title == "nightly" })
         XCTAssertFalse(titles(AppMenu.entries(context())).contains("# Waiting for your OK"))
     }
+
+    func testARunInAConsoleCanBeOpenedFromTheMenu() {
+        let console = AppMenu.RunEntry(runID: "learn.3", jobID: "learn", detail: "running for 2 min", console: true)
+        let plain = AppMenu.RunEntry(runID: "backup.9", jobID: "backup", detail: "running for 1 min")
+        let items = AppMenu.entries(context(running: [console, plain])).compactMap { if case let .item(i) = $0 { i } else { nil } }
+        XCTAssertEqual(items.first { $0.title == "Open Terminal for learn" }?.action, .openTerminal("learn.3"))
+        XCTAssertFalse(items.contains { $0.title == "Open Terminal for backup" }, "a run without a console")
+    }
+
+    func testTheConsoleOpensInKittyWhenItIsThere() {
+        XCTAssertEqual(ConsoleTerminal.chosen(saved: nil, kittyInstalled: true), .kitty)
+        XCTAssertEqual(ConsoleTerminal.chosen(saved: nil, kittyInstalled: false), .terminal)
+        XCTAssertEqual(ConsoleTerminal.chosen(saved: "terminal", kittyInstalled: true), .terminal)
+        XCTAssertEqual(ConsoleTerminal.chosen(saved: "kitty", kittyInstalled: false), .terminal, "kitty was removed")
+        XCTAssertEqual(ConsoleTerminal.kittyArguments(command: "/opt/homebrew/bin/tmux -L localcron-learn attach", runID: "learn.3"),
+                       ["--title", "learn.3 console", "/bin/sh", "-c", "exec /opt/homebrew/bin/tmux -L localcron-learn attach"])
+    }
 }

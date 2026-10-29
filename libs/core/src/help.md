@@ -154,8 +154,14 @@ real Claude Code console that you can open while it works: you see what
 it does, and you can type into it when something goes wrong. Without tmux a
 claude job runs as before (`claude -p`): you see its output only at the end.
 
-- Open it: **Open Terminal** next to the running job in the menu bar app,
-  or `{{CLI}} attach RUN` (a run id, or the job's id) in any terminal.
+- Open it, while the job runs, in any of three ways:
+  - the icon's menu: **Open Terminal for JOB**, or **Open Terminal** next to
+    the job in the window (kitty when it is installed, else Terminal;
+    Settings chooses);
+  - `{{CLI}} attach JOB` in any terminal;
+  - plain tmux, no {{APP}} needed: `tmux -L {{CLI}}-JOB attach`, for
+    example `tmux -L {{CLI}}-weekly-review attach`. The name is the same
+    for every run of the job.
 - Leave it with **Ctrl-B, then D**: the run goes on. Do not use Ctrl-C or
   `/exit` unless you want to end the run.
 - The run ends when Claude finishes its answer and nobody has the console

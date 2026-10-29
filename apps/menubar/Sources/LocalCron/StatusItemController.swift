@@ -216,6 +216,8 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             if let run = model.activeRuns.first(where: { $0.id == runID }) {
                 Task { @MainActor in await model.cancel(run) }
             }
+        case let .openTerminal(runID):
+            if let run = model.activeRuns.first(where: { $0.id == runID }) { model.openTerminal(run) }
         case .stopAllRuns:
             Task { @MainActor in await model.stopAll() }
         case let .showLog(runID):

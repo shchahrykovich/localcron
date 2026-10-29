@@ -101,7 +101,8 @@ matches, as in classic cron.
 
 With tmux installed (`brew install tmux`), every `claude` job runs in a real
 Claude Code console that you can open while it works and type into: **Open
-Terminal** in the app, or `localcron attach RUN` (a run or job id). Leave
+Terminal** in the app or its icon's menu (kitty when installed), `localcron
+attach JOB`, or plain `tmux -L localcron-JOB attach` without LocalCron. Leave
 with Ctrl-B, then D; the run goes on. Without tmux a claude job runs as
 `claude -p`, as before.
 

@@ -465,7 +465,7 @@ impl Engine {
         tmux: std::path::PathBuf,
         run_env: &[(OsString, OsString)],
     ) -> Option<(Option<i32>, String)> {
-        let console = Console::new(tmux, format!("{}-{run_id}", self.instance.cli()));
+        let console = Console::new(tmux, &self.instance.cli(), &job.id);
         let events = log_path.with_extension("events");
         let _ = fs::remove_file(&events);
         let mut env = run_env.to_vec();

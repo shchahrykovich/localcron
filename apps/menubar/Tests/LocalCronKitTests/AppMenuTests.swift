@@ -14,9 +14,9 @@ final class AppMenuTests: XCTestCase {
     }
 
     private func context(paused: Bool = false, running: [AppMenu.RunEntry] = [], failed: [AppMenu.RunEntry] = [],
-                         daemon: Bool = true) -> AppMenu.Context {
+                         waiting: [AppMenu.WaitingJob] = [], daemon: Bool = true) -> AppMenu.Context {
         AppMenu.Context(appName: "LocalCron", cliInstalled: false, summary: daemon ? "2 jobs" : nil, paused: paused,
-                        running: running, failed: failed)
+                        running: running, failed: failed, waiting: waiting)
     }
 
     func testEntries() {
@@ -61,5 +61,20 @@ final class AppMenuTests: XCTestCase {
         XCTAssertTrue(titles(entries).contains("# Last run failed"))
         let items = entries.compactMap { if case let .item(i) = $0 { i } else { nil } }
         XCTAssertEqual(items.first { $0.title == "nightly" }?.action, .showLog("nightly.4"))
+    }
+
+    func testAJobWaitingForSecretsIsOfferedNearTheTopAndNotAsAFailure() {
+        let waiting = AppMenu.WaitingJob(jobID: "deploy", secrets: ["github-token", "npm-token"])
+        let failed = [AppMenu.RunEntry(runID: "deploy.1", jobID: "deploy", detail: "Failed"),
+                      AppMenu.RunEntry(runID: "nightly.4", jobID: "nightly", detail: "exit 2")]
+        let entries = AppMenu.entries(context(failed: failed, waiting: [waiting]))
+        XCTAssertEqual(Array(titles(entries).prefix(5)),
+                       ["Open LocalCron", "New Job…", "Pause All Jobs", "# Waiting for your OK", "Allow Secrets for deploy…"])
+        let items = entries.compactMap { if case let .item(i) = $0 { i } else { nil } }
+        let allow = items.first { $0.action == .allowSecrets("deploy") }
+        XCTAssertEqual(allow?.detail, "Reads github-token, npm-token; runs fail until you allow it")
+        XCTAssertFalse(items.contains { $0.title == "deploy" }, "listed again as a failure")
+        XCTAssertTrue(items.contains { $0.title == "nightly" })
+        XCTAssertFalse(titles(AppMenu.entries(context())).contains("# Waiting for your OK"))
     }
 }

@@ -216,6 +216,17 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         case let .showLog(runID):
             model.showLog(runID: runID)
             DispatchQueue.main.async { self.showWindow() }
+        case let .allowSecrets(jobID):
+            guard let job = model.jobs.first(where: { $0.id == jobID }) else { return }
+            Task { @MainActor in
+                // From the menu the footer is not seen: say a failure in an
+                // alert. Cancel leaves no message, so an old one is cleared.
+                model.message = nil
+                let allowed = await model.allowSecrets(job)
+                if !allowed, !fromWindow, model.messageFailed, let why = model.message {
+                    alert(.failed("\(jobID) was not allowed", why))
+                }
+            }
         case .settings:
             model.page = .tabs
             model.tab = .settings

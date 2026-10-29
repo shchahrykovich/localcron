@@ -37,6 +37,17 @@ final class StatusIconTests: XCTestCase {
                        "LocalCron\n1 run is running.\nPaused: scheduled runs do not start.\nThe last run failed: a, b")
     }
 
+    func testAJobWaitingForSecretsShowsTheWarning() throws {
+        var waiting = try job("deploy", last: "failed")
+        waiting.secretsAllowed = false
+        var allowed = try job("ok", last: nil)
+        allowed.secretsAllowed = true
+        let icon = StatusIcon(status: try status(), jobs: [waiting, allowed])
+        XCTAssertTrue(icon.warning)
+        XCTAssertEqual(icon.waitingJobs, ["deploy"])
+        XCTAssertEqual(icon.toolTip(appName: "LocalCron"), "LocalCron\nWaiting for your OK to read secrets: deploy")
+    }
+
     func testRunningRunsAddThePlayBadge() throws {
         let icon = StatusIcon(status: try status(running: 2), jobs: [try job("a", last: "succeeded")])
         XCTAssertEqual(icon, StatusIcon(symbol: "clock.arrow.circlepath", running: 2, paused: false, failedJobs: []))

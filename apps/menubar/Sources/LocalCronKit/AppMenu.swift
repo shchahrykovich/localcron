@@ -9,6 +9,8 @@ public enum AppMenu {
         case setPaused(Bool)
         case stopRun(String), stopAllRuns
         case showLog(String)
+        /// Ask the user to allow the job (by id) to read its secrets.
+        case allowSecrets(String)
         case installCLI, installClaude, installCodex, copyMCPCommand
         case openLogsFolder
         case checkForUpdates, settings, quit
@@ -49,6 +51,18 @@ public enum AppMenu {
         }
     }
 
+    /// A job that may not read its secrets until the user allows it.
+    public struct WaitingJob: Equatable, Sendable {
+        public var jobID: String
+        /// The secrets it names.
+        public var secrets: [String]
+
+        public init(jobID: String, secrets: [String]) {
+            self.jobID = jobID
+            self.secrets = secrets
+        }
+    }
+
     /// What the menu depends on; read again at each open.
     public struct Context: Sendable {
         public var appName: String
@@ -60,15 +74,18 @@ public enum AppMenu {
         public var running: [RunEntry]
         /// Jobs whose last run failed or timed out.
         public var failed: [RunEntry]
+        /// Jobs waiting for the user to allow their secrets.
+        public var waiting: [WaitingJob]
 
         public init(appName: String, cliInstalled: Bool, summary: String?, paused: Bool = false,
-                    running: [RunEntry] = [], failed: [RunEntry] = []) {
+                    running: [RunEntry] = [], failed: [RunEntry] = [], waiting: [WaitingJob] = []) {
             self.appName = appName
             self.cliInstalled = cliInstalled
             self.summary = summary
             self.paused = paused
             self.running = running
             self.failed = failed
+            self.waiting = waiting
         }
     }
 
@@ -84,6 +101,14 @@ public enum AppMenu {
                 : .item(Item(title: "Pause All Jobs", symbol: "pause.fill", action: .setPaused(true),
                              detail: "No scheduled run starts")))
         }
+        if !c.waiting.isEmpty {
+            entries.append(.separator)
+            entries.append(.header("Waiting for your OK"))
+            for job in c.waiting {
+                entries.append(.item(Item(title: "Allow Secrets for \(job.jobID)…", symbol: "key", action: .allowSecrets(job.jobID),
+                                          detail: "Reads \(job.secrets.joined(separator: ", ")); runs fail until you allow it")))
+            }
+        }
         if !c.running.isEmpty {
             entries.append(.separator)
             entries.append(.header("Running"))
@@ -95,10 +120,13 @@ public enum AppMenu {
                 entries.append(.item(Item(title: "Stop All Runs", symbol: "stop.fill", action: .stopAllRuns)))
             }
         }
-        if !c.failed.isEmpty {
+        // A waiting job failed for that reason: its entry above says it.
+        let waitingIDs = Set(c.waiting.map(\.jobID))
+        let failed = c.failed.filter { !waitingIDs.contains($0.jobID) }
+        if !failed.isEmpty {
             entries.append(.separator)
             entries.append(.header("Last run failed"))
-            for run in c.failed {
+            for run in failed {
                 entries.append(.item(Item(title: run.jobID, symbol: "exclamationmark.triangle", action: .showLog(run.runID),
                                           detail: run.detail)))
             }

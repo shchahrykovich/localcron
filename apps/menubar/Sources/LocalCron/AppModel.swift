@@ -207,7 +207,12 @@ final class AppModel {
 
     // MARK: Jobs and runs
 
+    /// A job waiting for its secrets asks for the OK first: its first run
+    /// would fail without it.
     func runNow(_ job: JobView) async {
+        if job.secretsAllowed == false {
+            guard await allowSecrets(job) else { return }
+        }
         if let run = await perform("Could not run \(job.id)", { try await client.runJob(id: job.id) }) {
             say(run.status == .skipped ? "\(job.id) was not started: \(run.message)" : "\(job.id) started (\(run.id)).",
                 failed: run.status == .skipped)
@@ -330,7 +335,9 @@ final class AppModel {
 
     /// The user reads what the job runs, confirms, and proves it is them
     /// (Touch ID or the Mac password). Then the job as shown is allowed.
-    func allowSecrets(_ job: JobView) async {
+    /// True when it is allowed now.
+    @discardableResult
+    func allowSecrets(_ job: JobView) async -> Bool {
         let j = job.job
         let what = j.kind == .shell ? "Command: \(j.command ?? "")" : "\(j.kind.title) prompt: \(j.prompt ?? "")"
         let secrets = j.secretEnv.sorted { $0.key < $1.key }.map { "\($0.key) from \($0.value)" }.joined(separator: ", ")
@@ -342,18 +349,18 @@ final class AppModel {
         The job can do anything with these values, also send them elsewhere. \
         Allow it only if you wrote it or read it. A change to what it runs needs a new OK.
         """
-        guard confirm("Allow \(j.id) to read its secrets?", detail, button: "Allow…", destructive: false) else { return }
+        guard confirm("Allow \(j.id) to read its secrets?", detail, button: "Allow…", destructive: false) else { return false }
         let context = LAContext()
         do {
             guard try await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "allow the job \(j.id) to read its secrets")
-            else { return }
+            else { return false }
         } catch {
             say("\(j.id) was not allowed: \(error.localizedDescription)", failed: true)
-            return
+            return false
         }
-        if await perform("Could not allow \(j.id)", { try await client.allowJobSecrets(j) }) != nil {
-            say("\(j.id) may read its secrets now.")
-        }
+        guard await perform("Could not allow \(j.id)", { try await client.allowJobSecrets(j) }) != nil else { return false }
+        say("\(j.id) may read its secrets now.")
+        return true
     }
 
     func preview(_ schedule: String) async -> Result<PreviewScheduleResult, Error> {
@@ -519,8 +526,11 @@ final class AppModel {
             if let ended = ApiDate.parse(last.endedAt) { parts.append(Formatting.past(ended)) }
             return AppMenu.RunEntry(runID: last.id, jobID: job.id, detail: parts.joined(separator: " · "))
         }
+        let waiting = status == nil ? [] : jobs.filter { $0.secretsAllowed == false }.map {
+            AppMenu.WaitingJob(jobID: $0.id, secrets: Array(Set($0.job.secretEnv.values)).sorted())
+        }
         return AppMenu.Context(appName: Instance.current.appName, cliInstalled: cliInstalled, summary: summary,
-                               paused: paused, running: running, failed: failed)
+                               paused: paused, running: running, failed: failed, waiting: waiting)
     }
 
     // MARK: Updates

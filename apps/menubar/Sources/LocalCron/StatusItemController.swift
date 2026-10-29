@@ -16,6 +16,11 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     /// popover, then reaches `clicked`; without this check the same click
     /// would open it again.
     private var closedAt = Date.distantPast
+    /// While the popover is shown: a click in another app, and this app
+    /// losing focus (kitty opened), close it. `.transient` alone misses
+    /// clicks in other apps once this app is not the active one.
+    private var outsideClicks: Any?
+    private var resignActive: NSObjectProtocol?
 
     init(model: AppModel) {
         self.model = model
@@ -138,6 +143,27 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
         model.windowOpen = true
+        watchOutside()
+    }
+
+    /// performClose asks popoverShouldClose, so an alert or panel of this app
+    /// keeps the popover open.
+    private func watchOutside() {
+        stopWatchingOutside()
+        outsideClicks = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] _ in
+            MainActor.assumeIsolated { self?.popover.performClose(nil) }
+        }
+        resignActive = NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification, object: nil,
+                                                              queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.popover.performClose(nil) }
+        }
+    }
+
+    private func stopWatchingOutside() {
+        if let outsideClicks { NSEvent.removeMonitor(outsideClicks) }
+        if let resignActive { NotificationCenter.default.removeObserver(resignActive) }
+        outsideClicks = nil
+        resignActive = nil
     }
 
     /// Stay open while an alert or the folder panel opened from the popover
@@ -149,6 +175,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     func popoverDidClose(_ notification: Notification) {
         closedAt = Date()
         model.windowOpen = false
+        stopWatchingOutside()
     }
 
     // MARK: Right-click menu

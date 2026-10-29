@@ -11,8 +11,9 @@ LocalCron's MCP server. On Wednesday at 9, LocalCron starts
 
 ## What it does
 
-- Runs jobs on a cron schedule in local time (`0 9 * * wed`), or once
-  (`@at 2026-11-05 09:00`).
+- Runs jobs on a cron schedule in local time (`0 9 * * wed`), or once:
+  at a time (`@at 2026-11-05 09:00`) or after a delay (`@in 20m`). A job
+  that runs once is removed after its run; the run and its log stay.
 - Three kinds of job: `shell`, `claude` (`claude -p`), `codex` (`codex exec`).
 - Controls the runs: at most N at the same time (default 2), a queue for the
   others, no second run of a job that is still running, a timeout per job,
@@ -93,6 +94,7 @@ Five fields in local time: `minute hour day-of-month month day-of-week`.
 | `0 0 1 * *` | The first day of each month at 00:00 |
 | `@daily`, `@weekly`, `@hourly` | Short forms |
 | `@at 2026-11-05 09:00` | Once |
+| `@in 20m`, `@in 1h30m`, `@in 45s` | Once, that long from now (saved as `@at`) |
 
 When both day-of-month and day-of-week are set, a day matches if either one
 matches, as in classic cron.

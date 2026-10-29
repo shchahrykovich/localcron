@@ -31,7 +31,10 @@ The MCP server `{{CLI}}` has these tools. The CLI `{{CLI}}` does the same
    `minute hour day-of-month month day-of-week`: `0 9 * * wed` is every
    Wednesday at 09:00, `30 8 * * mon-fri` is weekdays at 08:30, `*/30 * * * *`
    is every 30 minutes. `@daily`, `@weekly`, `@hourly` also work. Once:
-   `@at 2026-11-05 09:00`. Call `preview_schedule` when you are not sure.
+   `@at 2026-11-05 09:00`, or a time from now: `@in 20m`, `@in 1h30m`,
+   `@in 45s` (saved as `@at`). A job that runs once is removed after its
+   run; the run and its log stay (`list_runs`, `get_run_log`). Call
+   `preview_schedule` when you are not sure.
 3. Choose the `kind`:
    - `claude`: `prompt` is the task. It runs `claude -p <prompt>` in `dir`.
      The run has no person to approve tools, so a tool that needs approval is

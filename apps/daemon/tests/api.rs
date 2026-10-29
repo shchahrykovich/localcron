@@ -368,6 +368,72 @@ fn preview_and_errors() {
     assert_eq!(d.call("set_config", json!({"max_concurrent": 0})).unwrap_err()["code"], "invalid");
 }
 
+fn timer(d: &Daemon, id: &str, after: &str, command: &str) -> Value {
+    json!({"id": id, "schedule": format!("@in {after}"), "kind": "shell", "command": command, "dir": d.dir()})
+}
+
+fn job_exists(d: &Daemon, id: &str) -> bool {
+    d.call("get_job", json!({"id": id})).is_ok()
+}
+
+#[test]
+fn a_timer_runs_once_then_its_job_is_removed_and_its_run_is_kept() {
+    let d = Daemon::start();
+    let added = d.ok("set_job", json!({"job": timer(&d, "tea", "2s", "echo tea is ready")}))["job"].clone();
+    assert!(added["schedule"].as_str().unwrap().starts_with("@at "), "{added}");
+    assert!(added["schedule_text"].as_str().unwrap().starts_with("Once, on"), "{added}");
+    assert!(added["next_run"].is_string(), "{added}");
+
+    wait_for(|| !job_exists(&d, "tea"), "the timer's job to be removed");
+    let runs = d.ok("list_runs", json!({"job_id": "tea"}))["runs"].clone();
+    let runs = runs.as_array().unwrap();
+    assert_eq!(runs.len(), 1, "{runs:?}");
+    assert_eq!(runs[0]["trigger"], "schedule");
+    assert_eq!(runs[0]["status"], "succeeded");
+    let log = d.ok("get_run_log", json!({"run_id": runs[0]["id"]}));
+    assert!(log["text"].as_str().unwrap().contains("tea is ready"), "{log}");
+
+    // The removal is saved: the job does not come back after a restart.
+    let d = Daemon::start_in(d.stop());
+    assert!(!job_exists(&d, "tea"));
+    assert_eq!(d.ok("list_runs", json!({"job_id": "tea"}))["runs"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn a_manual_run_of_a_timer_keeps_the_job() {
+    let d = Daemon::start();
+    d.ok("set_job", json!({"job": timer(&d, "later", "1h", "true")}));
+    let run = d.ok("run_job", json!({"id": "later"}))["run"].clone();
+    d.wait_status(run["id"].as_str().unwrap(), "succeeded");
+    let job = d.ok("get_job", json!({"id": "later"}))["job"].clone();
+    assert_eq!(job["enabled"], true);
+    assert!(job["next_run"].is_string(), "{job}");
+}
+
+#[test]
+fn runs_of_removed_timers_are_kept_up_to_keep_runs() {
+    let d = Daemon::start();
+    d.ok("set_config", json!({"keep_runs": 2, "max_concurrent": 3}));
+    for id in ["t1", "t2", "t3"] {
+        d.ok("set_job", json!({"job": timer(&d, id, "1s", "true")}));
+    }
+    wait_for(|| ["t1", "t2", "t3"].iter().all(|id| !job_exists(&d, id)), "the timers' jobs to be removed");
+    let runs = d.ok("list_runs", json!({}))["runs"].clone();
+    assert_eq!(runs.as_array().unwrap().len(), 2, "{runs}");
+    let log_dirs = std::fs::read_dir(d.home.path().join("logs/runs")).unwrap().count();
+    assert_eq!(log_dirs, 2);
+}
+
+#[test]
+fn a_timer_preview_is_one_time_from_now() {
+    let d = Daemon::start();
+    let p = d.ok("preview_schedule", json!({"schedule": "@in 20m", "count": 3}));
+    assert!(p["description"].as_str().unwrap().starts_with("Once, on"), "{p}");
+    assert_eq!(p["next"].as_array().unwrap().len(), 1);
+    let e = d.call("preview_schedule", json!({"schedule": "@in soon"})).unwrap_err();
+    assert!(e["message"].as_str().unwrap().contains("@in 20m"), "{e}");
+}
+
 #[test]
 fn a_job_gets_its_secret_and_no_reply_or_file_has_the_value() {
     use std::os::unix::fs::PermissionsExt;

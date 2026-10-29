@@ -90,6 +90,7 @@ Five fields in local time: `minute hour day-of-month month day-of-week`.
 | `0 0 1 * *` | The first day of each month at 00:00 |
 | `@daily`, `@weekly`, `@hourly` | Short forms |
 | `@at 2026-11-05 09:00` | Once |
+| `@in 20m`, `@in 1h30m`, `@in 45s` | Once, that long from now (saved as `@at`) |
 
 When both day-of-month and day-of-week are set, a day matches if either one
 matches, as in classic cron. Check a schedule with `{{CLI}} next "0 9 * * wed"`.
@@ -138,6 +139,9 @@ new value when this one expires or leaks.
 - A job never runs twice at once: a run that comes while one is queued or
   running is skipped.
 - A run stops after its timeout, 1 hour by default (`--timeout`).
+- A job that runs once (`@at`, `@in`) is removed after its run. The run and
+  its log stay in `{{CLI}} runs`: the newest 20 of all such jobs
+  (`{{CLI}} config --keep-runs N`). A Run Now does not remove it.
 - A time missed while the Mac slept or was off runs once at wake, unless
   the job has `--no-catch-up`. Times missed while paused do not run.
 - Runs use the PATH of your login shell, so `claude`, `codex`, `node` and

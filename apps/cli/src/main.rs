@@ -158,7 +158,7 @@ enum SecretCommand {
 struct AddArgs {
     /// a-z, 0-9 and '-': weekly-deps-check.
     id: String,
-    /// Cron in local time ("0 9 * * wed"), @daily, @weekly, or "@at 2026-11-05 09:00".
+    /// Cron in local time ("0 9 * * wed"), @daily, @weekly, once "@at 2026-11-05 09:00", or once from now "@in 20m".
     #[arg(long, short)]
     schedule: String,
     /// A shell command.

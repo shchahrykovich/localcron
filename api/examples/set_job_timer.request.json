@@ -1,0 +1,13 @@
+{
+  "id": 1,
+  "method": "set_job",
+  "params": {
+    "job": {
+      "id": "tea",
+      "schedule": "@in 20m",
+      "kind": "shell",
+      "command": "say tea is ready",
+      "dir": "/Users/me/shop"
+    }
+  }
+}

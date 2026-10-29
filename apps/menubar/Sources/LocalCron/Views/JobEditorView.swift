@@ -143,7 +143,7 @@ struct JobEditorView: View {
         case let .failure(e):
             Text(e.localizedDescription).font(.caption).foregroundStyle(.red)
         case nil:
-            Text("Cron: minute hour day-of-month month day-of-week, in local time. Once: @at 2026-11-05 09:00.")
+            Text("Cron: minute hour day-of-month month day-of-week, in local time. Once: @at 2026-11-05 09:00, or @in 20m from now.")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }

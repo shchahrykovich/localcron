@@ -27,7 +27,8 @@ pub struct AddJobArgs {
     /// a-z, 0-9 and '-', says what the job does: "weekly-deps-check".
     pub id: String,
     /// Local time. Five cron fields "minute hour day-of-month month day-of-week": "0 9 * * wed" is every Wednesday at
-    /// 09:00, "30 8 * * mon-fri" weekdays at 08:30. Also @hourly, @daily, @weekly, @monthly, or once: "@at 2026-11-05 09:00".
+    /// 09:00, "30 8 * * mon-fri" weekdays at 08:30. Also @hourly, @daily, @weekly, @monthly, or once: "@at 2026-11-05 09:00",
+    /// or a time from now: "@in 20m", "@in 1h30m", "@in 45s". A job that runs once is removed after its run; its run stays.
     pub schedule: String,
     /// "claude" (runs `claude -p <prompt>`), "codex" (runs `codex exec <prompt>`) or "shell" (runs command).
     pub kind: String,

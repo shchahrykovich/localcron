@@ -30,7 +30,7 @@ use localcron_core::instance::Instance;
 use localcron_core::job::{Job, JobKind};
 use localcron_core::paths::Paths;
 use localcron_core::run::{Run, RunStatus, Trigger};
-use localcron_core::schedule::Schedule;
+use localcron_core::schedule::{self, Schedule};
 use localcron_core::secret;
 
 use crate::console::{self, Console, Pane};
@@ -590,9 +590,17 @@ impl Engine {
             let _ = file.write_all(footer.as_bytes());
         }
         log!("run {run_id}: {:?} {}", run.status, run.message);
-        let job_id = run.job_id.clone();
+        let (job_id, trigger, queued_at) = (run.job_id.clone(), run.trigger, run.queued_at);
         if !st.jobs.contains_key(&job_id) {
             self.forget_job_runs(&mut st, &job_id);
+        }
+        // A one-off job is done after its time came. Only when it is still
+        // the job that was queued: a change since then gave it a new time.
+        let done = st.jobs.get(&job_id).is_some_and(|s| {
+            s.schedule.is_once() && !s.job.enabled && trigger != Trigger::Manual && s.job.updated_at.is_none_or(|u| u <= queued_at)
+        });
+        if done {
+            self.remove_done(&mut st, &job_id);
         }
         self.prune(&mut st, &job_id);
         self.save_runs(&st);
@@ -614,6 +622,46 @@ impl Engine {
             let run = st.runs.remove(*i);
             if let Some(path) = run.log {
                 let _ = fs::remove_file(path);
+            }
+        }
+    }
+
+    /// Remove a one-off job after its run. Unlike `remove_job`, its runs
+    /// stay, so the output can still be read.
+    fn remove_done(&self, st: &mut State, job_id: &str) {
+        let Some(old) = st.jobs.remove(job_id) else { return };
+        if self.save_jobs(st).is_err() {
+            st.jobs.insert(job_id.to_string(), old);
+            return;
+        }
+        if st.grants.remove(job_id).is_some() {
+            let _ = self.save_secrets(st);
+        }
+        log!("job {job_id}: removed after its one run");
+        self.prune_removed(st);
+    }
+
+    /// Keep the newest `keep_runs` finished runs of removed one-off jobs, in
+    /// all; delete the logs of the others.
+    fn prune_removed(&self, st: &mut State) {
+        let keep = st.config.keep_runs as usize;
+        let gone: Vec<usize> = st
+            .runs
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.status.is_finished() && !st.jobs.contains_key(&r.job_id))
+            .map(|(i, _)| i)
+            .collect();
+        if gone.len() <= keep {
+            return;
+        }
+        for i in gone[..gone.len() - keep].iter().rev() {
+            let run = st.runs.remove(*i);
+            if let Some(path) = run.log {
+                let _ = fs::remove_file(path);
+            }
+            if !st.runs.iter().any(|r| r.job_id == run.job_id) {
+                let _ = fs::remove_dir_all(self.paths.run_logs(&run.job_id));
             }
         }
     }
@@ -725,11 +773,12 @@ impl Engine {
 
     pub fn set_job(&self, params: SetJobParams) -> ApiResult<SetJobResult> {
         let mut job = params.job;
+        let local_now = Local::now();
+        job.schedule = schedule::resolve(&job.schedule, &local_now).map_err(|e| invalid(e.0))?;
         let schedule = job.validate().map_err(invalid)?;
         if !Path::new(&job.dir).is_dir() {
             return Err(invalid(format!("dir {} is not a folder", job.dir)));
         }
-        let local_now = Local::now();
         let next_due = schedule.next_after(&local_now);
         if schedule.is_once() && next_due.is_none() && job.enabled {
             return Err(invalid(format!("{} is in the past", job.schedule)));
@@ -911,9 +960,10 @@ impl Engine {
     }
 
     pub fn preview_schedule(&self, params: PreviewScheduleParams) -> ApiResult<PreviewScheduleResult> {
-        let schedule = Schedule::parse(&params.schedule).map_err(|e| invalid(e.0))?;
-        let mut next = Vec::new();
         let mut from = Local::now();
+        let text = schedule::resolve(&params.schedule, &from).map_err(|e| invalid(e.0))?;
+        let schedule = Schedule::parse(&text).map_err(|e| invalid(e.0))?;
+        let mut next = Vec::new();
         for _ in 0..params.count.unwrap_or(5).clamp(1, 20) {
             let Some(t) = schedule.next_after(&from) else { break };
             next.push(t.fixed_offset());

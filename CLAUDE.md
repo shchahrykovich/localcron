@@ -53,7 +53,9 @@ LocalCron.app (Swift) ───────────────────�
   and waits for it with `sigwait`; `unblock_signals_in_child` clears the mask
   in children, or they could not be stopped. `shellenv.rs` gets PATH from the
   login shell. A missed time is caught up once, from the newest `due_at` in
-  `runs.json` or the job's `updated_at`.
+  `runs.json` or the job's `updated_at`. `set_job` saves `@in 20m` as `@at`
+  (`schedule::resolve`). A one-off job is removed when its scheduled run ends
+  (`remove_done`); its runs stay, the newest `keep_runs` of all removed jobs.
 - Secrets (`libs/core/src/secret.rs`, `apps/daemon/src/secrets.rs`): a job's
   `secret_env` maps a variable to a secret name. Only the daemon writes and
   reads the values, in the login keychain (service `<bundle id>.secrets`),

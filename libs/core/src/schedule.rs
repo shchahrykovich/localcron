@@ -1,12 +1,14 @@
 //! When a job runs.
 //!
-//! Two forms:
+//! Three forms:
 //! - A cron expression with five fields, `minute hour day-of-month month
 //!   day-of-week`, in the Mac's local time: `0 9 * * wed` is every Wednesday
 //!   at 09:00. Names (`jan`, `wed`), lists (`1,15`), ranges (`mon-fri`) and
 //!   steps (`*/15`) work. `@hourly`, `@daily`, `@weekly`, `@monthly` and
 //!   `@yearly` are short forms.
 //! - `@at 2026-11-05 09:00`: once, at that local time.
+//! - `@in 20m`: once, that long from now. `resolve` turns it into `@at`
+//!   when the job is saved, so the time does not move on each restart.
 //!
 //! Day-of-month and day-of-week follow classic cron: when both are restricted
 //! (neither starts with `*`), a day matches if either one matches.
@@ -50,6 +52,9 @@ impl Schedule {
         if let Some(rest) = text.strip_prefix("@at") {
             return parse_at(rest.trim()).map(Schedule::At);
         }
+        if in_rest(text).is_some() {
+            return Err(ScheduleError(format!("{text:?} is a time from now: @in becomes @at when the job is saved")));
+        }
         let expanded = match text.to_ascii_lowercase().as_str() {
             "@yearly" | "@annually" => "0 0 1 1 *".to_string(),
             "@monthly" => "0 0 1 * *".to_string(),
@@ -58,7 +63,7 @@ impl Schedule {
             "@hourly" => "0 * * * *".to_string(),
             other if other.starts_with('@') => {
                 return Err(ScheduleError(format!(
-                    "unknown schedule {text:?}: use five cron fields, @hourly, @daily, @weekly, @monthly, @yearly or @at YYYY-MM-DD HH:MM"
+                    "unknown schedule {text:?}: use five cron fields, @hourly, @daily, @weekly, @monthly, @yearly, @at YYYY-MM-DD HH:MM or @in 20m"
                 )));
             }
             _ => text.to_string(),
@@ -83,7 +88,10 @@ impl Schedule {
     /// set: "At 09:00 on Wednesday". Falls back to the expression.
     pub fn describe(&self) -> String {
         match self {
-            Schedule::At(at) => format!("Once, on {} at {}", at.format("%a %-d %b %Y"), at.format("%H:%M")),
+            Schedule::At(at) => {
+                let time = if at.second() == 0 { at.format("%H:%M") } else { at.format("%H:%M:%S") };
+                format!("Once, on {} at {time}", at.format("%a %-d %b %Y"))
+            }
             Schedule::Cron(cron) => cron.describe(),
         }
     }
@@ -93,10 +101,53 @@ fn parse_at(text: &str) -> Result<NaiveDateTime, ScheduleError> {
     let text = text.replace('T', " ");
     for format in ["%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S"] {
         if let Ok(t) = NaiveDateTime::parse_from_str(&text, format) {
-            return Ok(t.with_second(0).unwrap_or(t));
+            return Ok(t);
         }
     }
     Err(ScheduleError(format!("@at needs a local time like \"@at 2026-11-05 09:00\", not {text:?}")))
+}
+
+/// `@in 20m` becomes `@at` that long after `now`, to the second. Every other
+/// schedule comes back as it is.
+pub fn resolve<Tz: TimeZone>(text: &str, now: &DateTime<Tz>) -> Result<String, ScheduleError> {
+    let Some(rest) = in_rest(text.trim()) else { return Ok(text.to_string()) };
+    let at = (now.clone() + parse_in(rest)?).naive_local();
+    Ok(format!("@at {}", at.format("%Y-%m-%d %H:%M:%S")))
+}
+
+/// The text after `@in`, in any case.
+fn in_rest(text: &str) -> Option<&str> {
+    text.get(..3).filter(|p| p.eq_ignore_ascii_case("@in")).map(|_| &text[3..])
+}
+
+/// `20m`, `1h30m`, `1h 30m`, `45s`, `2 days`: more than zero, at most
+/// `LOOKAHEAD_DAYS`.
+fn parse_in(text: &str) -> Result<Duration, ScheduleError> {
+    let bad = || ScheduleError(format!("@in needs a time from now like \"@in 20m\", \"@in 1h30m\" or \"@in 45s\", not {:?}", text.trim()));
+    let mut rest = text.trim();
+    if rest.is_empty() {
+        return Err(bad());
+    }
+    let mut seconds: i64 = 0;
+    while !rest.is_empty() {
+        let digits = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+        let n: i64 = rest[..digits].parse().map_err(|_| bad())?;
+        rest = rest[digits..].trim_start();
+        let letters = rest.find(|c: char| !c.is_ascii_alphabetic()).unwrap_or(rest.len());
+        let unit = match rest[..letters].to_ascii_lowercase().as_str() {
+            "s" | "sec" | "secs" | "second" | "seconds" => 1,
+            "m" | "min" | "mins" | "minute" | "minutes" => 60,
+            "h" | "hr" | "hrs" | "hour" | "hours" => 3600,
+            "d" | "day" | "days" => 86400,
+            _ => return Err(bad()),
+        };
+        rest = rest[letters..].trim_start();
+        seconds = n.checked_mul(unit).and_then(|s| seconds.checked_add(s)).ok_or_else(bad)?;
+    }
+    if seconds == 0 || seconds > LOOKAHEAD_DAYS * 86400 {
+        return Err(bad());
+    }
+    Ok(Duration::seconds(seconds))
 }
 
 /// The local time as an instant. In the autumn hour that happens twice, the
@@ -365,6 +416,40 @@ mod tests {
         assert_eq!(s.next_after(&at("2026-10-28 00:00")).unwrap(), at("2026-11-05 09:00"));
         assert!(s.next_after(&at("2026-11-05 09:00")).is_none());
         assert_eq!(Schedule::parse("@at 2026-11-05T09:00").unwrap(), s);
+    }
+
+    #[test]
+    fn at_keeps_seconds() {
+        let s = Schedule::parse("@at 2026-11-05 09:00:30").unwrap();
+        assert_eq!(s.next_after(&at("2026-11-05 09:00")).unwrap().format("%H:%M:%S").to_string(), "09:00:30");
+        assert_eq!(s.describe(), "Once, on Thu 5 Nov 2026 at 09:00:30");
+    }
+
+    #[test]
+    fn in_becomes_at_from_now() {
+        let now = Utc.with_ymd_and_hms(2026, 10, 29, 14, 7, 13).unwrap();
+        let r = |s: &str| resolve(s, &now).unwrap();
+        assert_eq!(r("@in 20m"), "@at 2026-10-29 14:27:13");
+        assert_eq!(r("@in 1h30m"), "@at 2026-10-29 15:37:13");
+        assert_eq!(r("@in 1h 30m"), "@at 2026-10-29 15:37:13");
+        assert_eq!(r("@in 45s"), "@at 2026-10-29 14:07:58");
+        assert_eq!(r("@in 2 days"), "@at 2026-10-31 14:07:13");
+        assert_eq!(r("@IN 10 Minutes"), "@at 2026-10-29 14:17:13");
+        // Other schedules come back as they are.
+        assert_eq!(r("0 9 * * wed"), "0 9 * * wed");
+        assert_eq!(r("@at 2026-11-05 09:00"), "@at 2026-11-05 09:00");
+        assert!(Schedule::parse(&r("@in 20m")).unwrap().is_once());
+    }
+
+    #[test]
+    fn in_errors() {
+        let now = Utc.with_ymd_and_hms(2026, 10, 29, 14, 7, 13).unwrap();
+        let e = |s: &str| resolve(s, &now).unwrap_err().0;
+        for bad in ["@in", "@in 0m", "@in 20", "@in m", "@in 20 parsecs", "@in -5m", "@in 99999999999999999999s", "@in 10000d"] {
+            assert!(e(bad).contains("@in"), "{bad}: {}", e(bad));
+        }
+        // Not resolved: the daemon resolves it when the job is saved.
+        assert!(Schedule::parse("@in 20m").unwrap_err().0.contains("@in"));
     }
 
     #[test]

@@ -111,7 +111,8 @@ public struct Job: Codable, Equatable, Sendable, Identifiable {
 
     /// a-z, 0-9 and '-': `weekly-deps-check`.
     public var id: String
-    /// A cron expression or `@at YYYY-MM-DD HH:MM`, in local time.
+    /// A cron expression or `@at YYYY-MM-DD HH:MM[:SS]`, in local time. The
+    /// daemon saves `@in 20m` as `@at`.
     public var schedule: String
     public var kind: JobKind
     public var command: String?

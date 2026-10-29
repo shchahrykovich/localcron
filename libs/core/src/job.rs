@@ -49,7 +49,8 @@ fn yes() -> bool {
 pub struct Job {
     /// a-z, 0-9 and '-': `weekly-deps-check`.
     pub id: String,
-    /// A cron expression or `@at YYYY-MM-DD HH:MM`, in local time.
+    /// A cron expression or `@at YYYY-MM-DD HH:MM[:SS]`, in local time. The
+    /// daemon saves `@in 20m` as `@at`.
     pub schedule: String,
     pub kind: JobKind,
     /// `shell` only.

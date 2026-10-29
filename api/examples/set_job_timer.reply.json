@@ -1,0 +1,19 @@
+{
+  "id": 1,
+  "result": {
+    "created": true,
+    "job": {
+      "catch_up": true,
+      "command": "say tea is ready",
+      "dir": "/Users/me/shop",
+      "enabled": true,
+      "id": "tea",
+      "kind": "shell",
+      "next_run": "2026-10-29T14:27:13Z",
+      "schedule": "@at 2026-10-29 14:27:13",
+      "schedule_text": "Once, on Thu 29 Oct 2026 at 14:27:13",
+      "timeout_secs": 3600,
+      "updated_at": "2026-10-29T14:07:13Z"
+    }
+  }
+}

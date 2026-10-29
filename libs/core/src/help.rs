@@ -7,10 +7,13 @@ use crate::instance::Instance;
 use crate::note;
 
 const HELP: &str = include_str!("help.md");
+/// The workspace version: the app, daemon and CLI share it.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub fn render(instance: &Instance) -> String {
     HELP.replace("{{APP}}", &instance.app_name())
         .replace("{{CLI}}", &instance.cli())
+        .replace("{{VERSION}}", VERSION)
         .replace("{{NOTE}}", demote(&note::render(instance)).trim_end())
         + "\n"
 }
@@ -46,6 +49,8 @@ mod tests {
         assert!(text.starts_with("# LocalCron-dev help\n"), "{}", &text[..40]);
         assert!(!text.contains("{{"), "a placeholder is left");
         assert!(text.contains("`localcron-dev secret set NAME`"));
+        assert!(text.contains(&format!("This page is for version {VERSION}.")));
+        assert!(text.contains("<https://github.com/shchahrykovich/localcron/releases/latest>"));
         // The note's sections are under "## Instructions for agents".
         let agents = text.find("## Instructions for agents").unwrap();
         let tools = text.find("### Tools").unwrap();

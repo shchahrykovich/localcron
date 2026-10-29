@@ -10,6 +10,7 @@ pub fn render(instance: &Instance) -> anyhow::Result<String> {
     let markdown = help::render(instance);
     let body = markdown::to_html_with_options(&markdown, &markdown::Options::gfm()).map_err(|e| anyhow::anyhow!("{e}"))?;
     Ok(TEMPLATE.replace("{{TITLE}}", &escape(&format!("{} help", instance.app_name())))
+        .replace("{{VERSION}}", help::VERSION)
         .replace("{{BODY}}", &body)
         .replace("{{MARKDOWN}}", &escape(&markdown)))
 }
@@ -34,7 +35,7 @@ header { position: sticky; top: 0; display: flex; gap: 12px; align-items: center
 header strong { flex: 1; }
 button { font: inherit; padding: 5px 14px; border-radius: 6px; border: 1px solid var(--line); background: var(--code); color: var(--text); cursor: pointer; }
 button:hover { border-color: var(--accent); }
-#status { color: var(--muted); font-size: 13px; }
+#status, #version { color: var(--muted); font-size: 13px; font-weight: normal; }
 main { max-width: 860px; margin: 0 auto; padding: 8px 24px 64px; }
 h1 { font-size: 28px; margin: 24px 0 8px; }
 h2 { font-size: 21px; margin: 36px 0 8px; padding-top: 12px; border-top: 1px solid var(--line); }
@@ -51,7 +52,7 @@ textarea { position: absolute; left: -9999px; }
 </head>
 <body>
 <header>
-  <strong>{{TITLE}}</strong>
+  <strong>{{TITLE}} <span id="version">{{VERSION}}</span></strong>
   <span id="status" role="status"></span>
   <a href="https://github.com/shchahrykovich/localcron">GitHub</a>
   <button id="copy" type="button">Copy as Markdown</button>
@@ -91,6 +92,7 @@ mod tests {
     fn the_page_has_the_markdown_and_names_every_command() {
         let page = render(&Instance::new("-dev").unwrap()).unwrap();
         assert!(page.contains("<title>LocalCron-dev help</title>"));
+        assert!(page.contains(&format!(r#"<span id="version">{}</span>"#, help::VERSION)));
         assert!(page.contains("Copy as Markdown"));
         // Rendered: a table, a code block; kept: the Markdown, escaped.
         assert!(page.contains("<table>") && page.contains("<pre><code"));

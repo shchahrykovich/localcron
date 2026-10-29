@@ -9,7 +9,10 @@ by asking a coding agent.
 This page is also for agents: **Copy as Markdown** at the top copies all of
 it, ready to paste into Claude Code, Codex or another agent.
 
-Source code, releases and issues: <https://github.com/shchahrykovich/localcron>.
+This page is for version {{VERSION}}. The app updates itself (menu: **Check
+for Updates…**); to download the newest version by hand, take the `.dmg` from
+<https://github.com/shchahrykovich/localcron/releases/latest>. Source code
+and issues: <https://github.com/shchahrykovich/localcron>.
 
 ## Set up
 

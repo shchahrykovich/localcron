@@ -53,6 +53,7 @@ textarea { position: absolute; left: -9999px; }
 <header>
   <strong>{{TITLE}}</strong>
   <span id="status" role="status"></span>
+  <a href="https://github.com/shchahrykovich/localcron">GitHub</a>
   <button id="copy" type="button">Copy as Markdown</button>
 </header>
 <main>
@@ -95,6 +96,9 @@ mod tests {
         assert!(page.contains("<table>") && page.contains("<pre><code"));
         assert!(page.contains("## Instructions for agents"));
         assert!(page.contains("&lt;secret NAME&gt;"));
+        // The link in the header and in the Markdown that Copy as Markdown copies.
+        assert!(page.contains(r#"<a href="https://github.com/shchahrykovich/localcron">GitHub</a>"#));
+        assert!(page.contains("&lt;https://github.com/shchahrykovich/localcron&gt;"));
         assert!(!page.contains("{{"), "a placeholder is left");
         // Every command a person can type is explained.
         for sub in crate::Cli::command().get_subcommands().filter(|c| !c.is_hide_set()) {

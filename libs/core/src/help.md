@@ -9,6 +9,8 @@ by asking a coding agent.
 This page is also for agents: **Copy as Markdown** at the top copies all of
 it, ready to paste into Claude Code, Codex or another agent.
 
+Source code, releases and issues: <https://github.com/shchahrykovich/localcron>.
+
 ## Set up
 
 1. Open {{APP}}. Its clock icon is in the menu bar.

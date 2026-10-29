@@ -33,6 +33,18 @@ pub struct RunsFile {
 pub struct SecretsFile {
     pub version: u32,
     pub secrets: Vec<SecretEntry>,
+    /// Jobs the user allowed, in the menu bar app, to read their secrets.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub grants: Vec<Grant>,
+}
+
+/// The user allowed this job, as `scope` says it was, to read its secrets.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Grant {
+    pub job_id: String,
+    /// `Job::secret_scope` when the user allowed it.
+    pub scope: String,
+    pub allowed_at: DateTime<FixedOffset>,
 }
 
 /// What is not secret about a secret. The value is in the Keychain.

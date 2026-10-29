@@ -1,4 +1,5 @@
 import AppKit
+import LocalAuthentication
 import LocalCronKit
 import Observation
 import ServiceManagement
@@ -18,13 +19,14 @@ final class AppModel {
     }
 
     enum Tab: Hashable {
-        case jobs, runs, settings
+        case jobs, runs, secrets, settings
     }
 
     /// What the window shows in place of the tabs.
     enum Page: Equatable {
         case tabs
         case editor(JobDraft)
+        case secretEditor(SecretDraft)
         case log(runID: String)
     }
 
@@ -33,6 +35,8 @@ final class AppModel {
     var jobs: [JobView] = []
     var runs: [Run] = []
     var config: Config?
+    /// Names and descriptions; the app never has a value after it sent it.
+    var secrets: [SecretInfo] = []
     var daemonProblem: String?
     var serviceNote: String?
     var update: UpdateState = .idle
@@ -168,6 +172,8 @@ final class AppModel {
             jobs = j
             runs = r
             config = c
+            // An older daemon has no secrets: not an error.
+            secrets = (try? await client.listSecrets()) ?? []
             daemonProblem = nil
         } catch {
             status = nil
@@ -270,9 +276,83 @@ final class AppModel {
             say("\(job.id) saved: \(result.job.scheduleText)\(next).")
             page = .tabs
             tab = .jobs
+            if result.job.secretsAllowed == false {
+                await allowSecrets(result.job)
+            }
+            if !result.missingSecrets.isEmpty {
+                let names = result.missingSecrets.map(\.name).joined(separator: ", ")
+                say("\(job.id) saved. Not set yet: \(names). Set them in Secrets; its runs fail until then.", failed: true)
+            }
             return nil
         } catch {
             return error.localizedDescription
+        }
+    }
+
+    // MARK: Secrets
+
+    func newSecret() {
+        page = .secretEditor(SecretDraft())
+    }
+
+    func edit(_ secret: SecretInfo) {
+        page = .secretEditor(SecretDraft(secret: secret))
+    }
+
+    /// Sends the value to the daemon, which keeps it in the Keychain. Returns
+    /// the error to show in the editor.
+    func save(_ draft: SecretDraft) async -> String? {
+        let params: SetSecretParams
+        switch draft.params() {
+        case let .success(p): params = p
+        case let .failure(e): return e.message
+        }
+        do {
+            let result = try await client.setSecret(params)
+            await refresh()
+            let what = result.created ? "stored" : params.value == nil ? "described" : "replaced"
+            say("\(params.name) \(what)." + (result.secret.usedBy.isEmpty ? "" : " Used by \(result.secret.usedBy.joined(separator: ", "))."))
+            page = .tabs
+            tab = .secrets
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    func delete(_ secret: SecretInfo) async {
+        guard let result = await perform("Could not delete \(secret.name)", { try await client.removeSecret(name: secret.name) })
+        else { return }
+        say(result.usedBy.isEmpty ? "\(secret.name) deleted."
+                                  : "\(secret.name) deleted. Runs of \(result.usedBy.joined(separator: ", ")) fail until it is set again.",
+            failed: !result.usedBy.isEmpty)
+    }
+
+    /// The user reads what the job runs, confirms, and proves it is them
+    /// (Touch ID or the Mac password). Then the job as shown is allowed.
+    func allowSecrets(_ job: JobView) async {
+        let j = job.job
+        let what = j.kind == .shell ? "Command: \(j.command ?? "")" : "\(j.kind.title) prompt: \(j.prompt ?? "")"
+        let secrets = j.secretEnv.sorted { $0.key < $1.key }.map { "\($0.key) from \($0.value)" }.joined(separator: ", ")
+        let detail = """
+        \(what)
+        Folder: \((j.dir as NSString).abbreviatingWithTildeInPath)
+        Secrets: \(secrets)
+
+        The job can do anything with these values, also send them elsewhere. \
+        Allow it only if you wrote it or read it. A change to what it runs needs a new OK.
+        """
+        guard confirm("Allow \(j.id) to read its secrets?", detail, button: "Allow…", destructive: false) else { return }
+        let context = LAContext()
+        do {
+            guard try await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "allow the job \(j.id) to read its secrets")
+            else { return }
+        } catch {
+            say("\(j.id) was not allowed: \(error.localizedDescription)", failed: true)
+            return
+        }
+        if await perform("Could not allow \(j.id)", { try await client.allowJobSecrets(j) }) != nil {
+            say("\(j.id) may read its secrets now.")
         }
     }
 

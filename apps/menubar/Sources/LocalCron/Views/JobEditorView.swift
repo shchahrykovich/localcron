@@ -77,6 +77,39 @@ struct JobEditorView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+                Section("Secrets") {
+                    ForEach($draft.secretRows) { $row in
+                        HStack {
+                            TextField("Variable", text: $row.variable, prompt: Text("GH_TOKEN"))
+                                .labelsHidden()
+                                .font(.system(.body, design: .monospaced))
+                            Image(systemName: "arrow.left").foregroundStyle(.secondary)
+                            Picker("Secret", selection: $row.secret) {
+                                Text("Choose…").tag("")
+                                ForEach(secretNames(keeping: row.secret), id: \.self) { Text($0).tag($0) }
+                            }
+                            .labelsHidden()
+                            Button {
+                                draft.secretRows.removeAll { $0.id == row.id }
+                            } label: {
+                                Image(systemName: "minus.circle")
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                    }
+                    Button {
+                        draft.secretRows.append(SecretEnvRow())
+                    } label: {
+                        Label("Add Secret Variable", systemImage: "plus")
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(model.secrets.isEmpty)
+                    Text(model.secrets.isEmpty
+                         ? "Make a secret in the Secrets tab first."
+                         : "The run gets each secret as its variable. After you save, you allow the job to read them.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Section {
                     Stepper("Stop after \(draft.timeoutMinutes) min", value: $draft.timeoutMinutes, in: 1...10080)
                     Toggle("Catch up a run missed while the Mac slept or was off", isOn: $draft.catchUp)
@@ -125,6 +158,14 @@ struct JobEditorView: View {
         try? await Task.sleep(for: .milliseconds(300))
         guard !Task.isCancelled else { return }
         preview = await model.preview(text)
+    }
+
+    /// The secrets that exist, and the row's own when it is gone, so the
+    /// picker can show it.
+    private func secretNames(keeping current: String) -> [String] {
+        var names = model.secrets.map(\.name)
+        if !current.isEmpty && !names.contains(current) { names.append(current) }
+        return names
     }
 
     private func chooseFolder() {

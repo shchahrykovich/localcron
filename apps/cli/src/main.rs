@@ -618,6 +618,9 @@ fn print_job(job: &JobView) {
     for (k, name) in &j.secret_env {
         println!("secret:    {k} from {name}");
     }
+    if job.secrets_allowed == Some(false) {
+        println!("secrets:   not allowed yet: allow this job in the menu bar app (Jobs, Allow Secrets)");
+    }
     if !j.note.is_empty() {
         println!("note:      {}", j.note);
     }

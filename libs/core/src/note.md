@@ -61,6 +61,13 @@ nobody there.
   `{"GH_TOKEN": "github-token"}`. Use `env` only for values that are not
   secret. `list_secrets` shows the names that exist: reuse one when it fits.
 - You never see or send a secret value. No tool takes or returns one.
+- A job with `secret_env` gets its secrets only after the user allows it in
+  the {{APP}} menu bar app (Jobs, Allow Secrets), with Touch ID or their
+  password. The reply says `secrets_allowed: false` until then: tell the user.
+  A change to what the job runs (command, prompt, args, folder, env,
+  secret_env) needs a new approval; a new schedule does not. You cannot
+  allow it yourself, by any tool or command.
+- Run logs show a secret's value as `<secret NAME>`.
 - When the reply has `missing_secrets`, give the user each `set_command` to
   run in their own terminal, with a description that says how to make a new
   value when this one expires or leaks: where, which scopes, the expiry.

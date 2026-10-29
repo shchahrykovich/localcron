@@ -481,6 +481,8 @@ name = "localcrond"
 version = "0.2.1"
 dependencies = [
  "chrono",
+ "core-foundation",
+ "core-foundation-sys",
  "libc",
  "localcron-core",
  "security-framework",

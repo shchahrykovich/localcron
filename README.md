@@ -112,6 +112,10 @@ localcron add deploy --schedule "0 2 * * *" --command ./deploy.sh --secret-env G
 localcron secret list
 ```
 
+Then allow the job in the menu bar app: Jobs, **Allow Secrets…**, with Touch
+ID or your password. The **Secrets** tab and the job editor do the same
+without a terminal.
+
 - `secret set` asks for the value with no echo, or reads it from stdin:
   `pbpaste | localcron secret set github-token`, or from 1Password:
   `op read "op://Private/GitHub/token" | localcron secret set github-token`.
@@ -121,9 +125,16 @@ localcron secret list
   that keychain at login, so runs at night work with nobody there.
 - The description says how to make a new value when this one expires or
   leaks. `secret describe NAME "<text>"` changes it.
-- No reply, log or file of LocalCron has the value. Agents name secrets in
-  `secret_env`; they never see or send a value. When a secret is missing,
-  the agent gives you the `localcron secret set …` command to run.
+- A job gets its secrets only after you allow it in the menu bar app. The
+  daemon takes that approval only from the app (it checks the app's code
+  signature), and the approval covers what the job runs: a new command,
+  prompt, arguments, folder, env or secret list needs a new one. Without
+  this, any program or agent that can write a job could write one that
+  prints a secret.
+- No reply or file of LocalCron has the value, and run logs show it as
+  `<secret NAME>`. Agents name secrets in `secret_env`; they never see or
+  send a value. When a secret is missing, the agent gives you the
+  `localcron secret set …` command to run.
 - A `claude` or `codex` job can read its environment and send it to its
   model: give such a job a token with narrow rights.
 - A build signed ad hoc (from source) cannot read a value that another build

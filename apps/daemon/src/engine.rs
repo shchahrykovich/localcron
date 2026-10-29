@@ -11,6 +11,7 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -19,7 +20,7 @@ use std::time::{Duration, Instant};
 
 use chrono::{DateTime, FixedOffset, Local, Timelike};
 use localcron_core::api::{
-    self, ApiError, CancelRunResult, Config, ErrorCode, GetRunLogParams, GetRunLogResult, JobView, ListJobsResult, ListRunsParams,
+    self, AllowJobSecretsParams, ApiError, CancelRunResult, Config, ErrorCode, GetRunLogParams, GetRunLogResult, JobView, ListJobsResult, ListRunsParams,
     ListRunsResult, ListSecretsResult, MissingSecret, NextRun, PreviewScheduleParams, PreviewScheduleResult, RemoveJobResult,
     RemoveSecretResult, SecretInfo, SecretState, SetConfigParams, SetJobParams, SetJobResult, SetSecretParams, SetSecretResult,
     StatusResult,
@@ -32,9 +33,10 @@ use localcron_core::schedule::Schedule;
 use localcron_core::secret;
 
 use crate::log;
+use crate::peer::{AppCheck, Trust};
 use crate::secrets::{Keychain, ReadError};
 use crate::shellenv::ShellEnvCache;
-use crate::store::{self, JobsFile, RunsFile, SecretEntry, SecretsFile};
+use crate::store::{self, Grant, JobsFile, RunsFile, SecretEntry, SecretsFile};
 
 pub const DAEMON_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -92,6 +94,8 @@ struct State {
     config: Config,
     /// Names and descriptions; the values are in the Keychain.
     secrets: BTreeMap<String, SecretEntry>,
+    /// By job id.
+    grants: BTreeMap<String, Grant>,
     stopping: bool,
 }
 
@@ -103,6 +107,7 @@ pub struct Engine {
     wake: Condvar,
     shell_env: ShellEnvCache,
     keychain: Keychain,
+    pub app_check: AppCheck,
 }
 
 impl Engine {
@@ -118,6 +123,7 @@ impl Engine {
         let (secrets_file, problem): (SecretsFile, _) = store::load(&paths.secrets());
         problem.into_iter().for_each(|p| log!("{p}"));
         let keychain = Keychain::for_instance(&instance);
+        let app_check = AppCheck::for_this_daemon(&instance);
 
         let started = now();
         let mut lost = 0;
@@ -161,11 +167,13 @@ impl Engine {
                 running: HashMap::new(),
                 config,
                 secrets: secrets_file.secrets.into_iter().map(|s| (s.name.clone(), s)).collect(),
+                grants: secrets_file.grants.into_iter().map(|g| (g.job_id.clone(), g)).collect(),
                 stopping: false,
             }),
             wake: Condvar::new(),
             shell_env: ShellEnvCache::default(),
             keychain,
+            app_check,
         });
         if lost > 0 {
             let st = engine.lock();
@@ -375,7 +383,7 @@ impl Engine {
             .env("LOCALCRON_JOB_ID", &job.id)
             .env("LOCALCRON_RUN_ID", run_id)
             .envs(&job.env)
-            .envs(secret_env)
+            .envs(secret_env.iter().map(|(k, v)| (k, v)))
             // Its own process group: a stop reaches every process it starts.
             .process_group(0);
         crate::unblock_signals_in_child(&mut command);
@@ -407,6 +415,12 @@ impl Engine {
         // A stop that came before the pid was known.
         self.notify();
         let status = child.wait();
+        // read_secrets gives the values in the order of secret_env.
+        let values: Vec<(&str, &[u8])> =
+            job.secret_env.values().map(String::as_str).zip(secret_env.iter().map(|(_, v)| v.as_bytes())).collect();
+        if let Err(e) = scrub_file(log_path, &values) {
+            log!("run {run_id}: cannot hide the secrets in its log: {e}");
+        }
         let message = match &status {
             Ok(s) => match (s.code(), s.signal()) {
                 (Some(_), _) => String::new(),
@@ -423,6 +437,16 @@ impl Engine {
     /// the state lock. An error says which secret and the command that sets it.
     fn read_secrets(&self, job: &Job) -> Result<Vec<(String, std::ffi::OsString)>, String> {
         use std::os::unix::ffi::OsStringExt;
+        if job.secret_env.is_empty() {
+            return Ok(Vec::new());
+        }
+        if !Self::allowed(&self.lock(), job) {
+            return Err(format!(
+                "job {} may not read its secrets yet: the user allows it in the {} menu bar app (Jobs, Allow Secrets). \
+                 A change to what the job runs needs a new approval",
+                job.id, self.instance
+            ));
+        }
         let mut values = Vec::with_capacity(job.secret_env.len());
         for (var, name) in &job.secret_env {
             let command = secret::set_command(&self.instance, name);
@@ -554,9 +578,15 @@ impl Engine {
 
     // MARK: API
 
+    /// The user allowed the job, as it is now, to read its secrets.
+    fn allowed(st: &State, job: &Job) -> bool {
+        st.grants.get(&job.id).is_some_and(|g| g.scope == job.secret_scope())
+    }
+
     fn view(&self, st: &State, slot: &Slot) -> JobView {
         let mut runs = st.runs.iter().filter(|r| r.job_id == slot.job.id);
         JobView {
+            secrets_allowed: (!slot.job.secret_env.is_empty()).then(|| Self::allowed(st, &slot.job)),
             job: slot.job.clone(),
             schedule_text: slot.schedule.describe(),
             next_run: slot.job.enabled.then_some(slot.next_due).flatten().map(|d| d.fixed_offset()),
@@ -662,6 +692,9 @@ impl Engine {
         }
         self.forget_job_runs(&mut st, id);
         self.save_runs(&st);
+        if st.grants.remove(id).is_some() {
+            let _ = self.save_secrets(&st);
+        }
         log!("job {id}: removed");
         drop(st);
         self.notify();
@@ -780,6 +813,8 @@ impl Engine {
         };
         let max = params.max_bytes.unwrap_or(DEFAULT_LOG_BYTES).clamp(1, MAX_LOG_BYTES);
         let (text, size) = read_tail(Path::new(&path), max).map_err(|e| internal(format!("cannot read {path}: {e}")))?;
+        // The file is cleaned when the run ends; this covers a run in progress.
+        let text = self.hide_secrets(&run.job_id, text);
         Ok(GetRunLogResult { truncated: size > text.len() as u64, run, text, size })
     }
 
@@ -850,7 +885,7 @@ impl Engine {
     // MARK: Secrets
 
     fn save_secrets(&self, st: &State) -> ApiResult<()> {
-        let file = SecretsFile { version: 1, secrets: st.secrets.values().cloned().collect() };
+        let file = SecretsFile { version: 1, secrets: st.secrets.values().cloned().collect(), grants: st.grants.values().cloned().collect() };
         store::save(&self.paths.secrets(), &file).map_err(|e| {
             log!("cannot save {}: {e}", self.paths.secrets().display());
             internal(format!("cannot save {}: {e}", self.paths.secrets().display()))
@@ -925,6 +960,47 @@ impl Engine {
         Ok(SetSecretResult { secret: self.secret_info(&entry, used_by), created })
     }
 
+    /// Only the menu bar app, after the user confirmed the job it sends.
+    pub fn allow_job_secrets(&self, params: AllowJobSecretsParams, trust: &Trust) -> ApiResult<JobView> {
+        if !trust.app {
+            return Err(ApiError::new(
+                ErrorCode::NotAllowed,
+                format!("only the {} menu bar app can allow a job to read secrets, after the user confirms there", self.instance),
+            ));
+        }
+        let id = params.job.id.clone();
+        let seen = params.job.secret_scope();
+        let mut st = self.lock();
+        let slot = st.jobs.get(&id).ok_or_else(|| not_found_job(&id))?;
+        // Compared by content, not by time: a change in the same second
+        // must not pass.
+        if slot.job.secret_scope() != seen {
+            return Err(invalid(format!("job {id} changed after it was shown; look at it again")));
+        }
+        if slot.job.secret_env.is_empty() {
+            return Err(invalid(format!("job {id} has no secret_env")));
+        }
+        let grant = Grant { job_id: id.clone(), scope: seen, allowed_at: now() };
+        let old = st.grants.insert(id.clone(), grant);
+        if let Err(e) = self.save_secrets(&st) {
+            match old {
+                Some(old) => st.grants.insert(id.clone(), old),
+                None => st.grants.remove(&id),
+            };
+            return Err(e);
+        }
+        log!("job {id}: allowed to read its secrets");
+        Ok(self.view(&st, &st.jobs[&id]))
+    }
+
+    /// Each value of the job's secrets in `text` becomes `<secret NAME>`.
+    fn hide_secrets(&self, job_id: &str, text: String) -> String {
+        let names: Vec<String> = self.lock().jobs.get(job_id).map(|s| s.job.secret_env.values().cloned().collect()).unwrap_or_default();
+        let values: Vec<(String, Vec<u8>)> = names.into_iter().filter_map(|n| self.keychain.get(&n).ok().map(|v| (n, v))).collect();
+        let pairs: Vec<(&str, &[u8])> = values.iter().map(|(n, v)| (n.as_str(), v.as_slice())).collect();
+        String::from_utf8(hide(text.as_bytes(), &pairs)).unwrap_or(text)
+    }
+
     pub fn remove_secret(&self, name: &str) -> ApiResult<RemoveSecretResult> {
         let mut st = self.lock();
         let old = st.secrets.remove(name);
@@ -980,6 +1056,47 @@ fn open_log(path: &Path) -> std::io::Result<File> {
         fs::create_dir_all(dir)?;
     }
     OpenOptions::new().create(true).append(true).open(path)
+}
+
+/// Values shorter than this are left alone: hiding "a" would change every
+/// word. A token is much longer.
+const MIN_HIDDEN: usize = 4;
+
+/// Each value becomes `<secret NAME>`.
+fn hide(text: &[u8], secrets: &[(&str, &[u8])]) -> Vec<u8> {
+    let mut out = text.to_vec();
+    for (name, value) in secrets.iter().filter(|(_, v)| v.len() >= MIN_HIDDEN) {
+        let mark = format!("<secret {name}>").into_bytes();
+        let mut next = Vec::with_capacity(out.len());
+        let mut i = 0;
+        while i < out.len() {
+            if out[i..].starts_with(value) {
+                next.extend_from_slice(&mark);
+                i += value.len();
+            } else {
+                next.push(out[i]);
+                i += 1;
+            }
+        }
+        out = next;
+    }
+    out
+}
+
+/// A log longer than this is left as it is when the run ends.
+const MAX_SCRUB: u64 = 64 * 1024 * 1024;
+
+/// Hide the values in a finished run's log file.
+fn scrub_file(path: &Path, secrets: &[(&str, &[u8])]) -> std::io::Result<()> {
+    if secrets.is_empty() || fs::metadata(path)?.len() > MAX_SCRUB {
+        return Ok(());
+    }
+    let text = fs::read(path)?;
+    let clean = hide(&text, secrets);
+    if clean != text {
+        fs::write(path, clean)?;
+    }
+    Ok(())
 }
 
 /// The last `max` bytes of a file, as text, and the file's size.
@@ -1045,6 +1162,13 @@ mod tests {
         let resumed = Some(local("2026-10-29 08:00").fixed_offset());
         let due = first_due(&j, &s, resumed, local("2026-10-29 12:00")).unwrap();
         assert_eq!(due, local("2026-11-04 09:00"));
+    }
+
+    #[test]
+    fn values_are_hidden_and_short_ones_are_not() {
+        let text = b"token=ghp_abc123 again ghp_abc123, a=x";
+        let out = hide(text, &[("github-token", b"ghp_abc123"), ("short", b"x")]);
+        assert_eq!(String::from_utf8(out).unwrap(), "token=<secret github-token> again <secret github-token>, a=x");
     }
 
     #[test]

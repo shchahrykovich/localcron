@@ -19,6 +19,7 @@ struct MainView: View {
                         Picker("", selection: $model.tab) {
                             Text("Jobs").tag(AppModel.Tab.jobs)
                             Text("Runs").tag(AppModel.Tab.runs)
+                            Text("Secrets").tag(AppModel.Tab.secrets)
                             Text("Settings").tag(AppModel.Tab.settings)
                         }
                         .pickerStyle(.segmented)
@@ -28,6 +29,7 @@ struct MainView: View {
                         switch model.tab {
                         case .jobs: JobsView()
                         case .runs: RunsView()
+                        case .secrets: SecretsView()
                         case .settings: SettingsView(perform: perform)
                         }
                     }
@@ -35,6 +37,9 @@ struct MainView: View {
                     JobEditorView(draft: draft)
                         // A new editor for each job, so the fields start fresh.
                         .id(draft.isNew ? "new" : draft.id)
+                case let .secretEditor(draft):
+                    SecretEditorView(draft: draft)
+                        .id(draft.isNew ? "new-secret" : "secret-\(draft.name)")
                 case let .log(runID):
                     RunLogView(runID: runID).id(runID)
                 }

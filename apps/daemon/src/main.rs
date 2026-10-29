@@ -5,6 +5,7 @@
 
 mod engine;
 mod lock;
+mod peer;
 mod secrets;
 mod shellenv;
 mod socket;

@@ -6,7 +6,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::Arc;
 
 use localcron_core::api::{
-    self, ApiError, CancelRunParams, ErrorCode, GetRunLogParams, HelloParams, HelloResult, IdParams, JobResult, ListRunsParams,
+    self, AllowJobSecretsParams, ApiError, CancelRunParams, ErrorCode, GetRunLogParams, HelloParams, HelloResult, IdParams, JobResult, ListRunsParams,
     NameParams, PreviewScheduleParams, Request, Response, RunResult, SetConfigParams, SetJobEnabledParams, SetJobParams,
     SetSecretParams,
 };
@@ -16,6 +16,7 @@ use serde_json::Value;
 
 use crate::engine::{DAEMON_VERSION, Engine};
 use crate::log;
+use crate::peer::Trust;
 
 /// A request line longer than this is refused: a job is small.
 const MAX_LINE: usize = 1024 * 1024;
@@ -42,6 +43,8 @@ pub fn serve(engine: Arc<Engine>, listener: UnixListener) {
 }
 
 fn connection(engine: &Engine, stream: UnixStream) {
+    // Once per connection: the peer cannot change.
+    let trust = engine.app_check.trust(&stream);
     let Ok(mut writer) = stream.try_clone() else { return };
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
@@ -57,7 +60,7 @@ fn connection(engine: &Engine, stream: UnixStream) {
             match serde_json::from_str::<Request>(&line) {
                 Ok(request) => {
                     let id = request.id;
-                    match dispatch(engine, request) {
+                    match dispatch(engine, request, &trust) {
                         Ok(result) => Response { id, result: Some(result), error: None },
                         Err(error) => Response { id, result: None, error: Some(error) },
                     }
@@ -82,7 +85,7 @@ fn to_value(value: impl Serialize) -> Result<Value, ApiError> {
     serde_json::to_value(value).map_err(|e| ApiError::new(ErrorCode::Internal, e.to_string()))
 }
 
-pub fn dispatch(engine: &Engine, request: Request) -> Result<Value, ApiError> {
+pub fn dispatch(engine: &Engine, request: Request, trust: &Trust) -> Result<Value, ApiError> {
     let p = request.params;
     match request.method.as_str() {
         "hello" => {
@@ -117,6 +120,7 @@ pub fn dispatch(engine: &Engine, request: Request) -> Result<Value, ApiError> {
         "list_secrets" => to_value(engine.list_secrets()),
         "set_secret" => to_value(engine.set_secret(params::<SetSecretParams>(p)?)?),
         "remove_secret" => to_value(engine.remove_secret(&params::<NameParams>(p)?.name)?),
+        "allow_job_secrets" => to_value(JobResult { job: engine.allow_job_secrets(params::<AllowJobSecretsParams>(p)?, trust)? }),
         other => Err(ApiError::new(ErrorCode::UnknownMethod, format!("unknown method {other:?}"))),
     }
 }

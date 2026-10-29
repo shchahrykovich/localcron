@@ -20,7 +20,7 @@ pub fn api_major(version: &str) -> Option<u32> {
     version.split('.').next()?.parse().ok()
 }
 
-pub const METHODS: [&str; 17] = [
+pub const METHODS: [&str; 18] = [
     "hello",
     "status",
     "list_jobs",
@@ -38,6 +38,7 @@ pub const METHODS: [&str; 17] = [
     "list_secrets",
     "set_secret",
     "remove_secret",
+    "allow_job_secrets",
 ];
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -65,6 +66,8 @@ pub enum ErrorCode {
     NotFound,
     Exists,
     Invalid,
+    /// Only the menu bar app may do this, after the user confirms.
+    NotAllowed,
     VersionMismatch,
     Internal,
 }
@@ -138,6 +141,10 @@ pub struct JobView {
     /// A run that is queued or running now.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_run: Option<Run>,
+    /// For a job with `secret_env`: the user allowed it, in the menu bar app,
+    /// to read its secrets as it is now. Its runs fail until then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secrets_allowed: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -411,4 +418,11 @@ mod tests {
         let text = format!("{p:?}");
         assert!(!text.contains("ghp_secret") && text.contains("<hidden>"), "{text}");
     }
+}
+
+/// The menu bar app sends it after the user confirms: the job as the user
+/// saw it. When what the job runs has changed since, it is refused.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AllowJobSecretsParams {
+    pub job: Job,
 }

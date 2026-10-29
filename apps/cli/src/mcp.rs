@@ -205,7 +205,8 @@ impl LocalCronMcp {
     #[tool(description = "Create a job that runs on a schedule: a Claude Code or Codex agent with a prompt, or a \
 shell command. Returns the job with schedule_text (the schedule in words) and next_run: tell the user both. An \
 existing id is an error unless replace is true. missing_secrets lists secrets in secret_env that are not set: give \
-the user each set_command to run in their own terminal, with --description saying how to make a new value.")]
+the user each set_command to run in their own terminal, with --description saying how to make a new value. \
+secrets_allowed false: the user must allow the job in the menu bar app before its runs get the secrets; tell them.")]
     async fn add_job(&self, Parameters(args): Parameters<AddJobArgs>) -> Result<CallToolResult, ErrorData> {
         Ok(match args.into_params(std::env::current_dir().ok()) {
             Ok(params) => self.call("set_job", params).await,

@@ -284,6 +284,42 @@ final class JobDraftTests: XCTestCase {
         XCTAssertEqual(shell?.command, "make test")
     }
 
+    func testSecretRowsBecomeSecretEnv() {
+        var draft = JobDraft(home: URL(fileURLWithPath: "/Users/me"))
+        draft.id = "deploy"
+        draft.kind = .shell
+        draft.command = "./deploy.sh"
+        draft.secretRows = [SecretEnvRow(variable: " GH_TOKEN ", secret: "github-token"), SecretEnvRow()]
+        XCTAssertEqual(try draft.job().get().secretEnv, ["GH_TOKEN": "github-token"])
+
+        draft.secretRows = [SecretEnvRow(variable: "GH_TOKEN", secret: "")]
+        guard case let .failure(e) = draft.job() else { return XCTFail("no error") }
+        XCTAssertTrue(e.message.contains("Choose a secret for GH_TOKEN"), e.message)
+        draft.secretRows = [SecretEnvRow(variable: "", secret: "github-token")]
+        guard case let .failure(e2) = draft.job() else { return XCTFail("no error") }
+        XCTAssertTrue(e2.message.contains("variable name"), e2.message)
+        draft.secretRows = [SecretEnvRow(variable: "A", secret: "x"), SecretEnvRow(variable: "A", secret: "y")]
+        guard case let .failure(e3) = draft.job() else { return XCTFail("no error") }
+        XCTAssertTrue(e3.message.contains("twice"), e3.message)
+    }
+
+    func testSecretDraft() throws {
+        var new = SecretDraft()
+        new.name = " github-token "
+        new.description = " repo shop "
+        guard case let .failure(e) = new.params() else { return XCTFail("a new secret needs a value") }
+        XCTAssertTrue(e.message.contains("value"))
+        new.value = "ghp_x\n"
+        XCTAssertEqual(try new.params().get(), SetSecretParams(name: "github-token", value: "ghp_x", description: "repo shop"))
+
+        let info = try Api.decoder.decode(SecretInfo.self, from: Data(#"{"name":"a","description":"d","updated_at":"2026-10-29T13:31:00Z","state":"ok","set_command":"localcron secret set a"}"#.utf8))
+        var edit = SecretDraft(secret: info)
+        XCTAssertFalse(edit.isNew)
+        edit.description = "new"
+        // An empty value keeps the old one.
+        XCTAssertEqual(try edit.params().get(), SetSecretParams(name: "a", value: nil, description: "new"))
+    }
+
     func testMissingFieldsAreNamed() {
         var draft = JobDraft(home: URL(fileURLWithPath: "/Users/me"))
         XCTAssertEqual(draft.dir, "/Users/me")

@@ -188,6 +188,24 @@ impl Job {
         }
     }
 
+    /// What the user allows when a job may read its secrets: everything that
+    /// decides what the run does with them. A change to any of it needs a new
+    /// approval; the schedule, timeout, note and on/off do not.
+    pub fn secret_scope(&self) -> String {
+        serde_json::json!({
+            "kind": self.kind,
+            "command": self.command,
+            "prompt": self.prompt,
+            "model": self.model,
+            "permission_mode": self.permission_mode,
+            "args": self.args,
+            "dir": self.dir,
+            "env": self.env,
+            "secret_env": self.secret_env,
+        })
+        .to_string()
+    }
+
     /// One line for logs and the run header.
     pub fn command_line(&self, shell: &str) -> String {
         let (program, args) = self.argv(shell);
@@ -313,6 +331,24 @@ mod tests {
         assert_eq!(job.timeout_secs, DEFAULT_TIMEOUT_SECS);
         let text = serde_json::to_string(&job).unwrap();
         assert!(!text.contains("prompt") && !text.contains("env"), "{text}");
+    }
+
+    #[test]
+    fn the_secret_scope_changes_with_what_the_run_does_only() {
+        let job = claude_job();
+        let scope = job.secret_scope();
+        let same = Job { schedule: "@daily".into(), timeout_secs: 5, enabled: false, catch_up: false, note: "n".into(), ..job.clone() };
+        assert_eq!(same.secret_scope(), scope);
+        for changed in [
+            Job { prompt: Some("Print $GH_TOKEN".into()), ..job.clone() },
+            Job { args: vec![], ..job.clone() },
+            Job { dir: "/tmp".into(), ..job.clone() },
+            Job { permission_mode: None, ..job.clone() },
+            Job { env: [("A".to_string(), "1".to_string())].into(), ..job.clone() },
+            Job { secret_env: [("A".to_string(), "b".to_string())].into(), ..job.clone() },
+        ] {
+            assert_ne!(changed.secret_scope(), scope);
+        }
     }
 
     #[test]

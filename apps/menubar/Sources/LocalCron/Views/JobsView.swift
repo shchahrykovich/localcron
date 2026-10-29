@@ -76,6 +76,17 @@ struct JobRow: View {
                     } else if !job.job.enabled {
                         Text("Off").font(.caption).foregroundStyle(.secondary)
                     }
+                    if job.secretsAllowed == false {
+                        Button {
+                            Task { await model.allowSecrets(job) }
+                        } label: {
+                            Label("Allow Secrets…", systemImage: "key")
+                        }
+                        .buttonStyle(.borderless)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .help("Its runs do not get their secrets until you allow it.")
+                    }
                     if let last = job.lastRun {
                         HStack(spacing: 3) {
                             Image(systemName: last.status.symbol).foregroundStyle(last.status.color)
@@ -109,6 +120,9 @@ struct JobRow: View {
         .contextMenu {
             Button("Edit…") { model.edit(job) }
             Button("Run Now") { Task { await model.runNow(job) } }
+            if job.secretsAllowed == false {
+                Button("Allow Secrets…") { Task { await model.allowSecrets(job) } }
+            }
             if let active = job.activeRun {
                 Button("Stop \(active.id)") { Task { await model.cancel(active) } }
                 Button("Kill \(active.id) Now") { Task { await model.cancel(active, kill: true) } }

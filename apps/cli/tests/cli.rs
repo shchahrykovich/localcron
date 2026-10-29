@@ -123,6 +123,7 @@ fn secrets_from_stdin_never_as_an_argument() {
     let (ok, out, err, _) = d.cli(&["add", "deploy", "--schedule", "@daily", "--command", "true", "--secret-env", "GH_TOKEN=github-token"]);
     assert!(ok, "{err}");
     assert!(out.contains("secret:    GH_TOKEN from github-token") && out.contains("localcron secret set github-token"), "{out}");
+    assert!(out.contains("not allowed yet: allow this job in the menu bar app"), "{out}");
 
     let (ok, out, err, _) = d.cli_with_stdin(&["secret", "set", "github-token"], "ghp_from_stdin\n");
     assert!(ok, "{err}");
@@ -132,8 +133,9 @@ fn secrets_from_stdin_never_as_an_argument() {
     let (_, out, _, _) = d.cli(&["secret", "list"]);
     assert!(out.starts_with("github-token") && out.contains(" ok ") && out.contains("used by deploy"), "{out}");
     assert!(!out.contains("ghp_from_stdin"), "{out}");
-    let (ok, _, _, code) = d.cli(&["run", "deploy", "--wait"]);
-    assert!(ok, "{code:?}");
+    // Nobody allowed the job in the menu bar app.
+    let (ok, out, _, _) = d.cli(&["run", "deploy", "--wait"]);
+    assert!(!ok && out.contains("may not read its secrets yet"), "{out}");
 
     // A value as an argument is refused by the parser.
     let (ok, _, _, _) = d.cli(&["secret", "set", "github-token", "ghp_in_history"]);

@@ -202,4 +202,14 @@ public final class DaemonClient: Sendable {
     }
     public func config() async throws -> Config { try await call("get_config", Empty()) }
     public func setConfig(_ p: SetConfigParams) async throws -> Config { try await call("set_config", p) }
+    public func listSecrets() async throws -> [SecretInfo] {
+        try await call("list_secrets", Empty(), as: ListSecretsResult.self).secrets
+    }
+    public func setSecret(_ p: SetSecretParams) async throws -> SetSecretResult { try await call("set_secret", p) }
+    public func removeSecret(name: String) async throws -> RemoveSecretResult {
+        try await call("remove_secret", NameParams(name: name))
+    }
+    public func allowJobSecrets(_ job: Job) async throws -> JobView {
+        try await call("allow_job_secrets", AllowJobSecretsParams(job: job), as: JobResult.self).job
+    }
 }

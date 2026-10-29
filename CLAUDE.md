@@ -59,8 +59,18 @@ LocalCron.app (Swift) ───────────────────�
   need one fails at once. `secrets.json` holds names and descriptions only.
   No reply, log line or file may contain a value; the value comes only from
   `localcron secret set` (prompt or stdin, never an argument), never from
-  MCP. Tests set `LOCALCRON_TEST_KEYCHAIN` to a keychain file in the temp
-  folder (debug builds only), so they never touch the login keychain.
+  MCP. A run gets its secrets only when the user allowed the job in the menu
+  bar app (`allow_job_secrets`): the grant in `secrets.json` holds
+  `Job::secret_scope`, so a change to what the job runs needs a new one.
+  `peer.rs` accepts that call only from this instance's app, checked by the
+  connection's audit token and code requirement (Developer ID: the daemon's
+  own team; ad hoc: the app program of the daemon's own bundle). Never
+  relax it: anything that reaches the socket could otherwise write a job
+  that prints a secret, and allow it. Run logs are cleaned of values when a
+  run ends, and `get_run_log` hides them while it runs.
+  Tests set `LOCALCRON_TEST_KEYCHAIN` to a keychain file in the temp
+  folder, and `LOCALCRON_TEST_TRUST_PEERS=1` to allow from any peer (debug
+  builds only), so they never touch the login keychain.
 - `apps/cli` (`localcron`): stateless. Sync socket client; `localcron mcp` is
   the MCP server (rmcp on a current-thread tokio runtime). `add_job` takes the
   MCP server's current folder as the default `dir`. `apps/cli` must not

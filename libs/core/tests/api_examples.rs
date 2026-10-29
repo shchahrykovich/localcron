@@ -54,6 +54,7 @@ fn every_example_decodes_and_every_method_has_one() {
                 "list_secrets" => check::<Empty>(p, &file),
                 "set_secret" => check::<SetSecretParams>(p, &file),
                 "remove_secret" => check::<NameParams>(p, &file),
+                "allow_job_secrets" => check::<AllowJobSecretsParams>(p, &file),
                 other => panic!("{file}: no params type for {other}"),
             }
         } else {
@@ -63,7 +64,7 @@ fn every_example_decodes_and_every_method_has_one() {
                 "hello" => check::<HelloResult>(r, &file),
                 "status" => check::<StatusResult>(r, &file),
                 "list_jobs" => check::<ListJobsResult>(r, &file),
-                "get_job" | "set_job_enabled" => check::<JobResult>(r, &file),
+                "get_job" | "set_job_enabled" | "allow_job_secrets" => check::<JobResult>(r, &file),
                 "set_job" => check::<SetJobResult>(r, &file),
                 "remove_job" => check::<RemoveJobResult>(r, &file),
                 "run_job" => check::<RunResult>(r, &file),

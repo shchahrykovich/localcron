@@ -19,7 +19,7 @@ final class ApiContractTests: XCTestCase {
     private static let methods = [
         "hello", "status", "list_jobs", "get_job", "set_job", "remove_job", "set_job_enabled", "run_job",
         "cancel_run", "list_runs", "get_run_log", "preview_schedule", "get_config", "set_config",
-        "list_secrets", "set_secret", "remove_secret",
+        "list_secrets", "set_secret", "remove_secret", "allow_job_secrets",
     ]
 
     /// `set_job_shell` → `set_job`, `run_job_second` → `run_job`,
@@ -60,6 +60,7 @@ final class ApiContractTests: XCTestCase {
         case "status", "list_jobs", "get_config", "list_secrets": try check(Empty.self, json, file, exact: true)
         case "set_secret": try check(SetSecretParams.self, json, file, exact: true)
         case "remove_secret": try check(NameParams.self, json, file, exact: true)
+        case "allow_job_secrets": try check(AllowJobSecretsParams.self, json, file, exact: true)
         default: XCTFail("\(file): no params type for \(method)")
         }
     }
@@ -69,7 +70,7 @@ final class ApiContractTests: XCTestCase {
         case "hello": try check(HelloResult.self, json, file, exact: true)
         case "status": try check(StatusResult.self, json, file, exact: true)
         case "list_jobs": try check(ListJobsResult.self, json, file, exact: true)
-        case "get_job", "set_job_enabled": try check(JobResult.self, json, file, exact: true)
+        case "get_job", "set_job_enabled", "allow_job_secrets": try check(JobResult.self, json, file, exact: true)
         case "set_job": try check(SetJobResult.self, json, file, exact: true)
         case "remove_job": try check(RemoveJobResult.self, json, file, exact: true)
         case "run_job": try check(RunResult.self, json, file, exact: true)

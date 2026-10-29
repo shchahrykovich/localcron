@@ -215,6 +215,9 @@ public struct JobView: Codable, Equatable, Sendable, Identifiable {
     public var lastRun: Run?
     /// A run that is queued or running now.
     public var activeRun: Run?
+    /// For a job with `secret_env`: the user allowed it, as it is now, to
+    /// read its secrets. Nil for a job without secrets.
+    public var secretsAllowed: Bool?
 
     public var id: String { job.id }
 
@@ -223,6 +226,7 @@ public struct JobView: Codable, Equatable, Sendable, Identifiable {
         case nextRun = "next_run"
         case lastRun = "last_run"
         case activeRun = "active_run"
+        case secretsAllowed = "secrets_allowed"
     }
 
     public init(from decoder: Decoder) throws {
@@ -232,6 +236,7 @@ public struct JobView: Codable, Equatable, Sendable, Identifiable {
         nextRun = try c.decodeIfPresent(String.self, forKey: .nextRun)
         lastRun = try c.decodeIfPresent(Run.self, forKey: .lastRun)
         activeRun = try c.decodeIfPresent(Run.self, forKey: .activeRun)
+        secretsAllowed = try c.decodeIfPresent(Bool.self, forKey: .secretsAllowed)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -241,6 +246,7 @@ public struct JobView: Codable, Equatable, Sendable, Identifiable {
         try c.encodeIfPresent(nextRun, forKey: .nextRun)
         try c.encodeIfPresent(lastRun, forKey: .lastRun)
         try c.encodeIfPresent(activeRun, forKey: .activeRun)
+        try c.encodeIfPresent(secretsAllowed, forKey: .secretsAllowed)
     }
 }
 
@@ -769,5 +775,16 @@ public struct RemoveSecretResult: Codable, Equatable, Sendable {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(removed, forKey: .removed)
         if !usedBy.isEmpty { try c.encode(usedBy, forKey: .usedBy) }
+    }
+}
+
+/// Sent after the user confirmed: the job as the user saw it. The daemon
+/// refuses it when what the job runs has changed since, and accepts it only
+/// from this app.
+public struct AllowJobSecretsParams: Codable, Equatable, Sendable {
+    public var job: Job
+
+    public init(job: Job) {
+        self.job = job
     }
 }

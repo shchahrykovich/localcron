@@ -22,8 +22,8 @@ public struct JobDraft: Equatable, Sendable {
     public var note: String
     /// Kept as it was: the form does not edit it.
     public var env: [String: String]
-    /// Kept as it was: the form does not edit it.
-    public var secretEnv: [String: String]
+    /// `secret_env` as rows the form can edit: variable and secret name.
+    public var secretRows: [SecretEnvRow]
 
     /// A new Claude job on weekday mornings in the home folder.
     public init(home: URL = FileManager.default.homeDirectoryForCurrentUser) {
@@ -42,7 +42,7 @@ public struct JobDraft: Equatable, Sendable {
         catchUp = true
         note = ""
         env = [:]
-        secretEnv = [:]
+        secretRows = []
     }
 
     public init(job: Job) {
@@ -61,7 +61,7 @@ public struct JobDraft: Equatable, Sendable {
         catchUp = job.catchUp
         note = job.note
         env = job.env
-        secretEnv = job.secretEnv
+        secretRows = job.secretEnv.sorted { $0.key < $1.key }.map { SecretEnvRow(variable: $0.key, secret: $0.value) }
     }
 
     /// Permission modes `claude --permission-mode` takes. Empty uses the
@@ -80,6 +80,23 @@ public struct JobDraft: Equatable, Sendable {
         let agent = kind != .shell
         if agent, trimmed(prompt) == nil { return .failure(ApiError(code: "invalid", message: "Write the prompt.")) }
         if !agent, trimmed(command) == nil { return .failure(ApiError(code: "invalid", message: "Write the command.")) }
+        var secretEnv: [String: String] = [:]
+        for row in secretRows {
+            let variable = trimmed(row.variable), secret = trimmed(row.secret)
+            switch (variable, secret) {
+            case (nil, nil):
+                continue
+            case let (v?, s?):
+                if secretEnv[v] != nil {
+                    return .failure(ApiError(code: "invalid", message: "\(v) is in Secrets twice."))
+                }
+                secretEnv[v] = s
+            case let (v?, nil):
+                return .failure(ApiError(code: "invalid", message: "Choose a secret for \(v)."))
+            case (nil, _):
+                return .failure(ApiError(code: "invalid", message: "Give the variable name for each secret, like GH_TOKEN."))
+            }
+        }
         return .success(Job(
             id: id,
             schedule: schedule,
@@ -96,5 +113,56 @@ public struct JobDraft: Equatable, Sendable {
             enabled: enabled,
             catchUp: catchUp,
             note: note.trimmingCharacters(in: .whitespacesAndNewlines)))
+    }
+}
+
+/// One line of a job's secrets: the variable the run gets, and the secret
+/// that gives its value.
+public struct SecretEnvRow: Equatable, Sendable, Identifiable {
+    public let id: UUID
+    public var variable: String
+    public var secret: String
+
+    public init(variable: String = "", secret: String = "") {
+        id = UUID()
+        self.variable = variable
+        self.secret = secret
+    }
+}
+
+/// The secret editor's fields. The value goes to the daemon, which keeps it
+/// in the Keychain; the app never stores it.
+public struct SecretDraft: Equatable, Sendable {
+    /// False when editing: the name cannot change, and an empty value keeps
+    /// the old one.
+    public var isNew: Bool
+    public var name: String
+    public var description: String
+    public var value: String
+
+    public init() {
+        isNew = true
+        name = ""
+        description = ""
+        value = ""
+    }
+
+    public init(secret: SecretInfo) {
+        isNew = false
+        name = secret.name
+        description = secret.description
+        value = ""
+    }
+
+    /// The request, or why the form is not complete.
+    public func params() -> Result<SetSecretParams, ApiError> {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if name.isEmpty { return .failure(ApiError(code: "invalid", message: "Give the secret a name, like github-token.")) }
+        let description = description.trimmingCharacters(in: .whitespacesAndNewlines)
+        // A value is used as typed: spaces can be part of it. A pasted line
+        // end is not.
+        let value = value.trimmingCharacters(in: .newlines)
+        if isNew && value.isEmpty { return .failure(ApiError(code: "invalid", message: "Paste or type the value.")) }
+        return .success(SetSecretParams(name: name, value: value.isEmpty ? nil : value, description: description))
     }
 }

@@ -59,6 +59,31 @@ struct KindBadge: View {
     }
 }
 
+extension SecretState {
+    var title: String {
+        switch self {
+        case .ok: "Ready"
+        case .missing: "No value"
+        case .unreadable: "Cannot be read"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .ok: "key.fill"
+        case .missing: "key.slash"
+        case .unreadable: "exclamationmark.lock.fill"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .ok: .green
+        case .missing, .unreadable: .orange
+        }
+    }
+}
+
 extension Run {
     var started: Date? { ApiDate.parse(startedAt ?? queuedAt) }
 
@@ -72,7 +97,7 @@ extension Run {
 
 /// Asks before something that cannot be undone. True when confirmed.
 @MainActor
-func confirm(_ title: String, _ detail: String, button: String) -> Bool {
+func confirm(_ title: String, _ detail: String, button: String, destructive: Bool = true) -> Bool {
     NSApp.activate()
     let alert = NSAlert()
     alert.messageText = title
@@ -80,6 +105,6 @@ func confirm(_ title: String, _ detail: String, button: String) -> Bool {
     alert.alertStyle = .warning
     alert.addButton(withTitle: button)
     alert.addButton(withTitle: "Cancel")
-    alert.buttons.first?.hasDestructiveAction = true
+    alert.buttons.first?.hasDestructiveAction = destructive
     return alert.runModal() == .alertFirstButtonReturn
 }

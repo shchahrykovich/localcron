@@ -55,8 +55,9 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         }
     }
 
-    /// The clock, a green play sign while runs are going, then a column: the
-    /// warning triangle at the top, the pause sign at the bottom.
+    /// The clock with a green play sign on its bottom right corner while runs
+    /// are going, then a column: the warning triangle at the top, the pause
+    /// sign at the bottom. Positions: StatusIconLayout.
     private func image(for icon: StatusIcon) -> NSImage? {
         let name = Instance.current.appName
         // The status bar ignores contentTintColor, so a color is drawn into
@@ -78,27 +79,31 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             : nil
         let play = icon.running > 0
             ? NSImage(systemSymbolName: "play.fill", accessibilityDescription: nil)?
-                .withSymbolConfiguration(badge.applying(.init(paletteColors: [.systemGreen])))
+                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 8, weight: .heavy).applying(.init(paletteColors: [.systemGreen])))
             : nil
         if warning == nil && pause == nil && play == nil {
             clock.isTemplate = !colored
             return clock
         }
-        let playWidth = play.map { $0.size.width + 1 } ?? 0
         let column = max(warning?.size.width ?? 0, pause?.size.width ?? 0)
-        let size = NSSize(width: (clock.size.width + 1 + playWidth + column).rounded(.up), height: max(clock.size.height, 16))
-        let image = NSImage(size: size, flipped: false) { rect in
-            clock.draw(in: NSRect(origin: NSPoint(x: 0, y: (rect.height - clock.size.height) / 2), size: clock.size))
-            if let play {
-                play.draw(in: NSRect(origin: NSPoint(x: clock.size.width + 1, y: (rect.height - play.size.height) / 2), size: play.size))
+        let layout = StatusIconLayout(clock: clock.size, play: play?.size, column: column)
+        let image = NSImage(size: layout.size, flipped: false) { rect in
+            clock.draw(in: layout.clock)
+            if let play, let spot = layout.play, let halo = layout.playHalo, let context = NSGraphicsContext.current {
+                // Clear a ring of the clock around the badge, so it reads.
+                context.compositingOperation = .destinationOut
+                NSColor.black.setFill()
+                NSBezierPath(roundedRect: halo, xRadius: 2, yRadius: 2).fill()
+                context.compositingOperation = .sourceOver
+                play.draw(in: spot)
             }
-            let x = clock.size.width + 1 + playWidth
             if let warning {
-                warning.draw(in: NSRect(origin: NSPoint(x: x + (column - warning.size.width) / 2, y: rect.height - warning.size.height),
+                warning.draw(in: NSRect(origin: NSPoint(x: layout.columnX + (column - warning.size.width) / 2,
+                                                        y: rect.height - warning.size.height),
                                         size: warning.size))
             }
             if let pause {
-                pause.draw(in: NSRect(origin: NSPoint(x: x + (column - pause.size.width) / 2, y: 0), size: pause.size))
+                pause.draw(in: NSRect(origin: NSPoint(x: layout.columnX + (column - pause.size.width) / 2, y: 0), size: pause.size))
             }
             return true
         }

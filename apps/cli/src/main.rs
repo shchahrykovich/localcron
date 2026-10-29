@@ -1,6 +1,7 @@
 //! `localcron`: command-line tool and MCP server for the LocalCron daemon.
 
 mod client;
+mod help_page;
 mod mcp;
 mod secret_input;
 
@@ -108,6 +109,9 @@ enum Command {
     /// Print the note (used by the app build).
     #[command(hide = true)]
     Note,
+    /// Print the help page as HTML (used by the app build).
+    #[command(hide = true)]
+    HelpPage,
 }
 
 #[derive(Subcommand)]
@@ -213,6 +217,7 @@ fn run(cli: Cli, instance: &Instance, paths: &Paths) -> anyhow::Result<ExitCode>
             runtime.block_on(mcp::run(socket.clone(), instance.clone()))?;
         }
         Command::Note | Command::Guide => print!("{}", localcron_core::note::render(instance)),
+        Command::HelpPage => print!("{}", help_page::render(instance)?),
         Command::Status => {
             let v = call("status", serde_json::to_value(Empty {})?)?;
             if json {

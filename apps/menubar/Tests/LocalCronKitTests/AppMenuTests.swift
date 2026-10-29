@@ -25,7 +25,7 @@ final class AppMenuTests: XCTestCase {
         XCTAssertEqual(first.title, "Open LocalCron")
         XCTAssertEqual(first.detail, "2 jobs")
         let actions = entries.compactMap { if case let .item(i) = $0 { i.action } else { nil } }
-        for needed: AppMenu.Action in [.installClaude, .installCodex, .installCLI, .checkForUpdates, .quit] {
+        for needed: AppMenu.Action in [.installClaude, .installCodex, .installCLI, .openHelp, .checkForUpdates, .quit] {
             XCTAssertTrue(actions.contains(needed), "\(needed)")
         }
     }

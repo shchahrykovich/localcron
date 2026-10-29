@@ -42,6 +42,9 @@ final class AppModel {
     var update: UpdateState = .idle
     var message: String?
     var messageFailed = false
+    /// The last result of a Coding agents button, shown under that button in
+    /// Settings. `at` makes a second click with the same result visible too.
+    var agentResult: (action: AppMenu.Action, feedback: Feedback, at: Date)?
     var busy = false
     var tab: Tab = .jobs
     var page: Page = .tabs
@@ -411,6 +414,22 @@ final class AppModel {
         NSWorkspace.shared.open([URL(fileURLWithPath: path)], withApplicationAt: console, configuration: NSWorkspace.OpenConfiguration())
     }
 
+    /// The help page of this bundle, in the default web browser: the app for
+    /// .html files may be an editor.
+    func openHelp() {
+        let page = Bundle.main.bundleURL.appendingPathComponent(BundleLayout.helpPage)
+        guard FileManager.default.fileExists(atPath: page.path) else {
+            say("The help page is missing: \(page.path). It is made by scripts/build-app.sh.", failed: true)
+            return
+        }
+        NSApp.activate()
+        if let https = URL(string: "https://example.com"), let browser = NSWorkspace.shared.urlForApplication(toOpen: https) {
+            NSWorkspace.shared.open([page], withApplicationAt: browser, configuration: NSWorkspace.OpenConfiguration())
+        } else {
+            NSWorkspace.shared.open(page)
+        }
+    }
+
     func openLogsFolder() {
         let dir = status.map { URL(fileURLWithPath: $0.logsDir) } ?? Paths.logsDir
         let runsDir = dir.appendingPathComponent("runs")
@@ -438,6 +457,7 @@ final class AppModel {
             feedback = .failed("Could not install the command line tool", error.localizedDescription)
         }
         say(feedback)
+        agentResult = (.installCLI, feedback, Date())
         return feedback
     }
 
@@ -479,6 +499,7 @@ final class AppModel {
         }.value
         busy = false
         say(feedback)
+        agentResult = (.installClaude, feedback, Date())
         return feedback
     }
 
@@ -497,6 +518,7 @@ final class AppModel {
             feedback = .failed("Could not add \(Instance.current.appName) to Codex", error.localizedDescription)
         }
         say(feedback)
+        agentResult = (.installCodex, feedback, Date())
         return feedback
     }
 

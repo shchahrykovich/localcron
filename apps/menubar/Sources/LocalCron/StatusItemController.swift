@@ -233,6 +233,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             DispatchQueue.main.async { self.showWindow() }
         case .copyMCPCommand: model.copy(model.mcpCommand)
         case .openLogsFolder: model.openLogsFolder()
+        case .openHelp: model.openHelp()
         case .installCLI: report(model.installCLI(), fromWindow: fromWindow)
         case .installClaude:
             Task { @MainActor in report(await model.installClaude(), fromWindow: fromWindow) }

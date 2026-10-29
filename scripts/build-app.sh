@@ -103,6 +103,12 @@ note="$(mktemp)"
 [[ "$(head -1 "$note")" == "# $app_name" ]] || lr_die "the bundled CLI does not think it is $app_name: $(head -1 "$note")"
 mv "$note" "$APP/Contents/Resources/LocalCron.md"
 chmod 644 "$APP/Contents/Resources/LocalCron.md"
+# The help page the menu's Help opens in the browser; same temp-file reason.
+help_page="$(mktemp)"
+"$APP/Contents/Helpers/$cli_program" help-page > "$help_page"
+grep -q "<title>$app_name help</title>" "$help_page" || lr_die "the help page does not name $app_name"
+mv "$help_page" "$APP/Contents/Resources/help.html"
+chmod 644 "$APP/Contents/Resources/help.html"
 
 lr_say "Signing ($([[ "$identity" == "-" ]] && echo ad-hoc || echo "Developer ID"))"
 if [[ "$identity" == "-" ]]; then

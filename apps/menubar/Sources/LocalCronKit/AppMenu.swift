@@ -12,7 +12,7 @@ public enum AppMenu {
         /// Ask the user to allow the job (by id) to read its secrets.
         case allowSecrets(String)
         case installCLI, installClaude, installCodex, copyMCPCommand
-        case openLogsFolder
+        case openLogsFolder, openHelp
         case checkForUpdates, settings, quit
     }
 
@@ -140,6 +140,8 @@ public enum AppMenu {
             .item(Item(title: "Copy MCP Command", symbol: "doc.on.doc", action: .copyMCPCommand)),
             .separator,
             .item(Item(title: "Show Run Logs Folder", symbol: "folder", action: .openLogsFolder)),
+            .item(Item(title: "\(c.appName) Help", symbol: "questionmark.circle", action: .openHelp,
+                       detail: "Every command, for you and your agents")),
             .item(Item(title: "Check for Updates…", symbol: "arrow.clockwise", action: .checkForUpdates)),
             .item(Item(title: "Settings…", symbol: "slider.horizontal.3", action: .settings, shortcut: ",")),
             .separator,

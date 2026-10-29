@@ -40,7 +40,10 @@ LocalCron.app (Swift) ───────────────────�
 - `libs/core`: `schedule.rs` (cron parser, `next_after`, `describe`),
   `job.rs` (fields, validation, argv), `run.rs`, `api.rs` (socket types and
   `METHODS`), `instance.rs`, `paths.rs`, `note.md` (the agent note, also the
-  MCP instructions). No I/O.
+  MCP instructions), `help.md` (the help page for people, which ends with
+  the note; the CLI's hidden `help-page` renders it to HTML and
+  `build-app.sh` puts it in the bundle as `help.html`). No I/O. A new CLI
+  command needs a line in `help.md`: a test checks every command is there.
 - `apps/daemon` (`localcrond`): no async runtime, only threads. `engine.rs`
   holds all state under one mutex. The scheduler thread sleeps on a condvar
   until the next due time, a run deadline, or a change, at most 60 s (so a

@@ -76,6 +76,10 @@ localcron config --max-concurrent 3
 
 The folder of a new job is the current folder (`--dir` changes it).
 
+**Help** in the icon's menu opens a page with every command and the agent
+instructions in your browser. Its **Copy as Markdown** button copies all of
+it, to paste into an agent.
+
 ## Schedules
 
 Five fields in local time: `minute hour day-of-month month day-of-week`.

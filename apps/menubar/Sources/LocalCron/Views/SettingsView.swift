@@ -34,6 +34,15 @@ struct SettingsView: View {
                     Spacer()
                     Button("Copy") { perform(.copyMCPCommand) }.controlSize(.small)
                 }
+                HStack {
+                    VStack(alignment: .leading) {
+                        Text("Help")
+                        Text("Every command and the agent instructions, in your browser. Copy as Markdown gives it to an agent.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Open") { perform(.openHelp) }
+                }
             }
             Section("General") {
                 Toggle("Open at login", isOn: $openAtLogin)
@@ -83,14 +92,25 @@ struct SettingsView: View {
         .disabled(model.busy)
     }
 
+    /// The button's last result shows under it: when nothing changes (the
+    /// tool is installed already), a click must still show that it worked.
     private func agentButton(_ title: String, detail: String, action: AppMenu.Action) -> some View {
-        HStack {
-            VStack(alignment: .leading) {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(title)
                 Text(detail).font(.caption).foregroundStyle(.secondary)
+                if let result = model.agentResult, result.action == action {
+                    Label(result.feedback.summary, systemImage: result.feedback.failed ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(result.feedback.failed ? .red : .green)
+                        .textSelection(.enabled)
+                        .id(result.at)
+                        .transition(.opacity)
+                }
             }
+            .animation(.easeIn(duration: 0.25), value: model.agentResult?.at)
             Spacer()
-            Button(title.hasPrefix("Install") ? "Install" : "Add") { perform(action) }
+            Button(title.hasPrefix("Install") ? (model.cliInstalled ? "Reinstall" : "Install") : "Add") { perform(action) }
         }
     }
 

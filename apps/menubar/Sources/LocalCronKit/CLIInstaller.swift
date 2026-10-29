@@ -19,6 +19,8 @@ public enum BundleLayout {
     public static var cli: String { cli(for: .current) }
     /// The note for Claude Code and Codex, linked into ~/.claude and ~/.codex.
     public static let claudeNote = "Contents/Resources/LocalCron.md"
+    /// The help page Help opens in the browser.
+    public static let helpPage = "Contents/Resources/help.html"
 }
 
 public struct CLIInstaller {

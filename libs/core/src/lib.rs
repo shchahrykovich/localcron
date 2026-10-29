@@ -5,11 +5,12 @@
 //! - `run`: one execution of a job.
 //! - `api`: socket API types, shared by the daemon and the CLI.
 //! - `instance`, `paths`: names and folders of this copy of LocalCron.
-//! - `note`: the text for Claude Code and Codex.
+//! - `note`: the text for Claude Code and Codex; `help`: the help page.
 
 pub mod api;
 pub mod instance;
 pub mod job;
+pub mod help;
 pub mod note;
 pub mod paths;
 pub mod run;

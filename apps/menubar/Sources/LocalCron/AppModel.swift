@@ -144,18 +144,25 @@ final class AppModel {
         }
     }
 
-    /// An ad-hoc build gets a new signature each time it is built. After
-    /// scripts/install.sh replaces the app, launchd keeps the old launch
-    /// constraint and refuses to start the new daemon. Registering again
-    /// records the new signature. Release builds are signed by team and are
-    /// not affected.
+    /// The daemon does not answer although it is registered: scripts/install.sh
+    /// removed its job, or an ad-hoc rebuild is refused for a while. See
+    /// DaemonRestart.
     private func registerAgainIfStale() async {
-        guard inBundle, BuildKind.current == .dev, daemonService.status == .enabled else { return }
+        guard inBundle, daemonService.status == .enabled else { return }
+        // Time for launchd to start the daemon on its own.
         try? await Task.sleep(for: .seconds(2))
-        guard (try? await client.status()) == nil else { return }
+        let service = daemonService
         do {
-            try await daemonService.unregister()
-            try daemonService.register()
+            let started = try await DaemonRestart.run(
+                answers: { [client] in (try? await client.status()) != nil },
+                registerAgain: {
+                    try await service.unregister()
+                    try service.register()
+                },
+                sleep: { seconds in try? await Task.sleep(for: .seconds(seconds)) })
+            if !started {
+                serviceNote = "The daemon does not start. Quit \(Instance.current.appName) and open it again."
+            }
         } catch {
             serviceNote = "Could not start the daemon again: \(error.localizedDescription)"
         }

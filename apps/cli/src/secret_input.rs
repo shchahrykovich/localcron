@@ -7,6 +7,7 @@ use std::io::{BufRead, Read, Write};
 use std::path::Path;
 
 use anyhow::{Context, bail};
+use localcron_core::secret_file::{self, Format};
 
 pub fn read_value(name: &str) -> anyhow::Result<String> {
     // SAFETY: isatty only reads the descriptor.
@@ -15,23 +16,28 @@ pub fn read_value(name: &str) -> anyhow::Result<String> {
     Ok(value)
 }
 
-/// The value of `key` in a .env: the file (or named pipe) `file`, or stdin.
-/// A named pipe is opened and read once: 1Password Environments asks the
-/// user at each read.
-pub fn read_from_env(key: &str, file: Option<&Path>) -> anyhow::Result<String> {
+/// The value at `key` in a file of settings (`file`, a named pipe, or
+/// stdin), in `format` or the one its name says. A named pipe is opened and
+/// read once: 1Password Environments asks the user at each read.
+pub fn read_from_file(key: &str, file: Option<&Path>, format: Option<&str>) -> anyhow::Result<String> {
+    let format = match (format, file) {
+        (Some(f), _) => Format::parse(f).map_err(anyhow::Error::msg)?,
+        (None, Some(path)) => Format::of_path(path),
+        (None, None) => Format::Env,
+    };
     let text = match file {
         Some(path) => std::fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?,
         None => {
             // SAFETY: isatty only reads the descriptor.
             if unsafe { libc::isatty(0) } == 1 {
-                bail!("pipe the .env in (cat .env | …) or give --env-file PATH");
+                bail!("pipe the file in (cat .env | …) or give --file PATH");
             }
             let mut text = String::new();
-            std::io::stdin().lock().read_to_string(&mut text).context("cannot read the .env from stdin")?;
+            std::io::stdin().lock().read_to_string(&mut text).context("cannot read stdin")?;
             text
         }
     };
-    let value = localcron_core::dotenv::lookup(&text, key).map_err(anyhow::Error::msg)?;
+    let value = secret_file::lookup(format, &text, key).map_err(anyhow::Error::msg)?;
     localcron_core::secret::check_value(&value).map_err(|e| anyhow::anyhow!("{key}: {e}"))?;
     Ok(value)
 }

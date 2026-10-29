@@ -124,10 +124,14 @@ without a terminal.
   `pbpaste | localcron secret set github-token`, or from 1Password:
   `op read "op://Private/GitHub/token" | localcron secret set github-token`.
   There is no argument for the value, so it never stays in the shell history.
-- From a `.env`: `--key GH_TOKEN --env-file .env` takes that variable from a
-  file or a named pipe (1Password Environments mounts `.env` files as pipes;
+- From a file of settings: `--key PATH --file FILE` takes one value, and
+  the secret keeps its own name. The format comes from the file's name, or
+  `--format env|json|ini`: `--key GH_TOKEN --file .env`,
+  `--key services.github.token --file config.json`,
+  `--key default.aws_secret_access_key --file ~/.aws/credentials`. A file
+  may be a named pipe (1Password Environments mounts `.env` files as pipes;
   it is read once), and `cat .env | localcron secret set NAME --key GH_TOKEN`
-  from a pipe. The secret keeps its own name.
+  reads a pipe.
 - The daemon stores the value in your login keychain (service
   `dev.localcron.app.secrets`) and reads it when a run starts. macOS unlocks
   that keychain at login, so runs at night work with nobody there.

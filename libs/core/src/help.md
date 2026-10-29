@@ -104,12 +104,21 @@ text. The value is kept in your login keychain, so runs at night can read it.
    `op read "op://Private/GitHub/token" | {{CLI}} secret set github-token`.
    The menu bar app's **Secrets** tab does the same.
 
-   From a `.env`, with `--key` (the variable in the file; the secret keeps
-   its own name):
-   - a file: `{{CLI}} secret set github-token --key GH_TOKEN --env-file .env`
-   - a 1Password Environments `.env`, which is a named pipe: the same
-     command with its path. It is read once, so 1Password asks once.
-   - a pipe: `cat .env | {{CLI}} secret set github-token --key GH_TOKEN`
+   From a file of settings, with `--key`, the path of the value in the
+   file. The secret keeps its own name. The file's name says its format;
+   `--format env|json|ini` says it when the name does not.
+
+   | File | `--key` | Example |
+   |---|---|---|
+   | `.env`, `.env.local`, `*.env`, any other name | the variable | `--key GH_TOKEN --file .env` |
+   | `*.json` | a dotted path, array indexes as numbers; or a JSON Pointer `/a/b` | `--key services.github.token --file config.json` |
+   | `*.ini`, `*.cfg`, `*.conf`, `credentials`, `.npmrc` | `section.key`, or a key before any section as written | `--key default.aws_secret_access_key --file ~/.aws/credentials` |
+
+   - A 1Password Environments `.env` is a named pipe: give its path as
+     `--file`. It is read once, so 1Password asks once.
+   - From a pipe: `cat .env | {{CLI}} secret set github-token --key GH_TOKEN`
+     (stdin is `.env` unless `--format` says otherwise).
+   - An error names the keys that are there, never a value.
 2. Name it in a job: `--secret-env GH_TOKEN=github-token`. The run gets the
    value as `$GH_TOKEN`.
 3. Allow the job: in the icon's menu, **Waiting for your OK**, then

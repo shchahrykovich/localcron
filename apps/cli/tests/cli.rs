@@ -177,7 +177,7 @@ fn a_secret_from_a_key_of_a_env_file_a_named_pipe_or_stdin() {
     let env = d.home().join("app.env");
     std::fs::write(&env, "# app\nexport GH_TOKEN=ghp_from_file\nOTHER=x\n").unwrap();
     let file = env.to_str().unwrap();
-    let (ok, out, err) = cli_within(&d, &["secret", "set", "github-token", "--key", "GH_TOKEN", "--env-file", file], 10);
+    let (ok, out, err) = cli_within(&d, &["secret", "set", "github-token", "--key", "GH_TOKEN", "--file", file], 10);
     assert!(ok && out.contains("Stored github-token"), "{out}{err}");
 
     // A named pipe, as 1Password Environments mounts a .env: one writer, one read.
@@ -190,7 +190,7 @@ fn a_secret_from_a_key_of_a_env_file_a_named_pipe_or_stdin() {
         let mut f = std::fs::OpenOptions::new().write(true).open(writer_path).unwrap();
         f.write_all(b"OPENAI_API_KEY=\"sk-from-pipe\"\n").unwrap();
     });
-    let (ok, out, err) = cli_within(&d, &["secret", "set", "openai", "--key", "OPENAI_API_KEY", "--env-file", pipe.to_str().unwrap()], 10);
+    let (ok, out, err) = cli_within(&d, &["secret", "set", "openai", "--key", "OPENAI_API_KEY", "--file", pipe.to_str().unwrap()], 10);
     assert!(ok && out.contains("Stored openai"), "{out}{err}");
     writer.join().unwrap();
 
@@ -198,9 +198,9 @@ fn a_secret_from_a_key_of_a_env_file_a_named_pipe_or_stdin() {
     assert!(ok && out.contains("Stored other"), "{out}{err}");
 
     // Errors name keys, never values.
-    let (ok, _, err) = cli_within(&d, &["secret", "set", "x", "--key", "NOPE", "--env-file", file], 10);
+    let (ok, _, err) = cli_within(&d, &["secret", "set", "x", "--key", "NOPE", "--file", file], 10);
     assert!(!ok && err.contains("NOPE is not in the .env; it has GH_TOKEN, OTHER") && !err.contains("ghp_"), "{err}");
-    let (ok, _, err) = cli_within(&d, &["secret", "set", "x", "--env-file", file], 10);
+    let (ok, _, err) = cli_within(&d, &["secret", "set", "x", "--file", file], 10);
     assert!(!ok && err.contains("--key"), "{err}");
 
     let (_, list, _, _) = d.cli(&["secret", "list"]);
@@ -208,4 +208,26 @@ fn a_secret_from_a_key_of_a_env_file_a_named_pipe_or_stdin() {
         assert!(list.contains(name), "{list}");
     }
     assert!(!list.contains("ghp_from_file") && !list.contains("sk-from-pipe"), "{list}");
+}
+
+#[test]
+fn a_secret_from_a_path_in_a_json_or_ini_file() {
+    let d = Daemon::start();
+    let json = d.home().join("config.json");
+    std::fs::write(&json, r#"{"services": {"github": {"token": "ghp_json"}}}"#).unwrap();
+    let aws = d.home().join("credentials");
+    std::fs::write(&aws, "[default]\naws_secret_access_key = aws_secret\n").unwrap();
+    let (ok, out, err) = cli_within(&d, &["secret", "set", "github-token", "--key", "services.github.token", "--file", json.to_str().unwrap()], 10);
+    assert!(ok && out.contains("Stored github-token"), "{out}{err}");
+    // `credentials` is INI by its name.
+    let (ok, out, err) = cli_within(&d, &["secret", "set", "aws-secret", "--key", "default.aws_secret_access_key", "--file", aws.to_str().unwrap()], 10);
+    assert!(ok && out.contains("Stored aws-secret"), "{out}{err}");
+    // stdin is .env unless --format says otherwise.
+    let (ok, out, err, _) = d.cli_with_stdin(&["secret", "set", "from-json", "--key", "a.b", "--format", "json"], r#"{"a": {"b": "v1"}}"#);
+    assert!(ok && out.contains("Stored from-json"), "{out}{err}");
+
+    let (ok, _, err) = cli_within(&d, &["secret", "set", "x", "--key", "services.gitlab.token", "--file", json.to_str().unwrap()], 10);
+    assert!(!ok && err.contains("services has github") && !err.contains("ghp_json"), "{err}");
+    let (ok, _, err, _) = d.cli_with_stdin(&["secret", "set", "x", "--key", "a", "--format", "yaml"], "a: 1");
+    assert!(!ok && err.contains("env, json or ini"), "{err}");
 }

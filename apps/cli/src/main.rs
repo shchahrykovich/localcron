@@ -125,14 +125,19 @@ enum SecretCommand {
         /// How to make a new value: where, which scopes, when it expires.
         #[arg(long)]
         description: Option<String>,
-        /// The input is a .env: take the value of this variable, such as
-        /// GH_TOKEN. The secret keeps NAME.
+        /// The input is a file of settings: take the value at this path.
+        /// .env: GH_TOKEN; JSON: services.github.token; INI:
+        /// default.aws_secret_access_key. The secret keeps NAME.
         #[arg(long)]
         key: Option<String>,
-        /// The .env to read, with --key: a file, or a named pipe such as a
+        /// The file to read, with --key: a file, or a named pipe such as a
         /// 1Password Environments .env (read once). Without it, stdin.
         #[arg(long, requires = "key")]
-        env_file: Option<PathBuf>,
+        file: Option<PathBuf>,
+        /// env, json or ini. Default: from the file's name (.json, .ini,
+        /// .cfg, .conf, credentials, .npmrc), else env; env for stdin.
+        #[arg(long, requires = "key")]
+        format: Option<String>,
     },
     /// Change only the description.
     Describe { name: String, description: String },
@@ -403,10 +408,10 @@ fn secret(
         Ok(())
     };
     match command {
-        SecretCommand::Set { name, description, key, env_file } => {
+        SecretCommand::Set { name, description, key, file, format } => {
             localcron_core::secret::check_name(&name).map_err(anyhow::Error::msg)?;
             let value = match key {
-                Some(key) => secret_input::read_from_env(&key, env_file.as_deref())?,
+                Some(key) => secret_input::read_from_file(&key, file.as_deref(), format.as_deref())?,
                 None => secret_input::read_value(&name)?,
             };
             let v = call("set_secret", serde_json::to_value(SetSecretParams { name, value: Some(value), description })?)?;

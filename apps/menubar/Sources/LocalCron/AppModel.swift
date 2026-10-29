@@ -349,17 +349,8 @@ final class AppModel {
     @discardableResult
     func allowSecrets(_ job: JobView) async -> Bool {
         let j = job.job
-        let what = j.kind == .shell ? "Command: \(j.command ?? "")" : "\(j.kind.title) prompt: \(j.prompt ?? "")"
-        let secrets = j.secretEnv.sorted { $0.key < $1.key }.map { "\($0.key) from \($0.value)" }.joined(separator: ", ")
-        let detail = """
-        \(what)
-        Folder: \((j.dir as NSString).abbreviatingWithTildeInPath)
-        Secrets: \(secrets)
-
-        The job can do anything with these values, also send them elsewhere. \
-        Allow it only if you wrote it or read it. A change to what it runs needs a new OK.
-        """
-        guard confirm("Allow \(j.id) to read its secrets?", detail, button: "Allow…", destructive: false) else { return false }
+        let approval = SecretApproval(job: j)
+        guard confirm(approval.title, approval.summary, details: approval.details, button: "Allow…") else { return false }
         let context = LAContext()
         do {
             guard try await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "allow the job \(j.id) to read its secrets")

@@ -95,6 +95,35 @@ extension Run {
     }
 }
 
+/// Asks with a short text and long details in a scrolling field below it, so
+/// the window never grows past the screen and its buttons stay in view.
+@MainActor
+func confirm(_ title: String, _ detail: String, details: String, button: String) -> Bool {
+    NSApp.activate()
+    let alert = NSAlert()
+    alert.messageText = title
+    alert.informativeText = detail
+    alert.alertStyle = .warning
+    alert.addButton(withTitle: button)
+    alert.addButton(withTitle: "Cancel")
+    let scroll = NSTextView.scrollableTextView()
+    scroll.frame = NSRect(x: 0, y: 0, width: 520, height: 240)
+    scroll.borderType = .bezelBorder
+    scroll.hasVerticalScroller = true
+    if let text = scroll.documentView as? NSTextView {
+        text.string = details
+        text.isEditable = false
+        text.isSelectable = true
+        text.font = .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+        text.textContainerInset = NSSize(width: 4, height: 4)
+    }
+    alert.accessoryView = scroll
+    // Cancel is the safe answer for Return.
+    alert.buttons[0].keyEquivalent = ""
+    alert.buttons[1].keyEquivalent = "\r"
+    return alert.runModal() == .alertFirstButtonReturn
+}
+
 /// Asks before something that cannot be undone. True when confirmed.
 @MainActor
 func confirm(_ title: String, _ detail: String, button: String, destructive: Bool = true) -> Bool {

@@ -24,6 +24,9 @@ use localcron_core::instance::Instance;
 
 const ITEM_NOT_FOUND: i32 = -25300;
 const INTERACTION_NOT_ALLOWED: i32 = -25308;
+/// What a read gets when another build of the daemon stored the item and the
+/// Keychain may not ask the user.
+const AUTH_FAILED: i32 = -25293;
 #[cfg(any(test, debug_assertions))]
 const TEST_PASSWORD: &str = "localcron-test";
 
@@ -72,7 +75,7 @@ impl Keychain {
             Ok(()) => Ok(()),
             // An item another build made: its access list does not have this
             // program, so it cannot be changed. Replace it.
-            Err(e) if e.code() == INTERACTION_NOT_ALLOWED => {
+            Err(e) if e.code() == INTERACTION_NOT_ALLOWED || e.code() == AUTH_FAILED => {
                 if let Ok((_, item)) = find_generic_password(Some(std::slice::from_ref(&keychain)), &self.service, name) {
                     item.delete();
                 }
@@ -114,11 +117,15 @@ impl Keychain {
 }
 
 fn describe(e: &Error) -> String {
-    match e.code() {
-        INTERACTION_NOT_ALLOWED => {
-            "the Keychain needs a dialog to give the value: it is locked, or another build of LocalCron stored it".into()
+    describe_code(e.code()).unwrap_or_else(|| format!("Keychain error {}: {e}", e.code()))
+}
+
+fn describe_code(code: i32) -> Option<String> {
+    match code {
+        INTERACTION_NOT_ALLOWED | AUTH_FAILED => {
+            Some("the Keychain needs a dialog to give the value: it is locked, or another build of LocalCron stored it".into())
         }
-        _ => format!("Keychain error {}: {e}", e.code()),
+        _ => None,
     }
 }
 
@@ -160,6 +167,15 @@ mod tests {
         assert!(k.delete("github-token").unwrap());
         assert!(!k.delete("github-token").unwrap());
         assert_eq!(k.get("github-token"), Err(ReadError::Missing));
+    }
+
+    #[test]
+    fn a_value_another_build_stored_is_explained() {
+        // -25293 came from a dev build signed ad hoc, read by a Developer ID one.
+        for code in [INTERACTION_NOT_ALLOWED, AUTH_FAILED] {
+            assert!(describe_code(code).unwrap().contains("another build of LocalCron stored it"), "{code}");
+        }
+        assert_eq!(describe_code(-1), None);
     }
 
     #[test]

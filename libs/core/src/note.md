@@ -76,6 +76,13 @@ nobody there.
   The command asks for the value with no echo. From the clipboard or a
   password manager: `pbpaste | {{CLI}} secret set github-token` or
   `op read "op://Private/GitHub/token" | {{CLI}} secret set github-token`.
+- When the value is in a `.env` (a file, or a 1Password Environments `.env`,
+  which is a named pipe), the command takes one variable from it, and the
+  secret may have another name:
+  `{{CLI}} secret set github-token --key GH_TOKEN --env-file .env`, or
+  `cat .env | {{CLI}} secret set github-token --key GH_TOKEN`. It prints no
+  value, so you may run it yourself when the user asks; never read the
+  `.env` yourself.
 - Do not suggest running it with `!` in this chat, and never ask the user to
   paste the value here: the chat goes to the model provider. If the user
   pastes a secret anyway, do not use it; tell them it is now in the chat and

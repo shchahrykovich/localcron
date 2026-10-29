@@ -103,6 +103,13 @@ text. The value is kept in your login keychain, so runs at night can read it.
    `pbpaste | {{CLI}} secret set github-token`, or from 1Password:
    `op read "op://Private/GitHub/token" | {{CLI}} secret set github-token`.
    The menu bar app's **Secrets** tab does the same.
+
+   From a `.env`, with `--key` (the variable in the file; the secret keeps
+   its own name):
+   - a file: `{{CLI}} secret set github-token --key GH_TOKEN --env-file .env`
+   - a 1Password Environments `.env`, which is a named pipe: the same
+     command with its path. It is read once, so 1Password asks once.
+   - a pipe: `cat .env | {{CLI}} secret set github-token --key GH_TOKEN`
 2. Name it in a job: `--secret-env GH_TOKEN=github-token`. The run gets the
    value as `$GH_TOKEN`.
 3. Allow the job: in the icon's menu, **Waiting for your OK**, then

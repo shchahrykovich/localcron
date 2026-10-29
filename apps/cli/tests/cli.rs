@@ -148,3 +148,64 @@ fn secrets_from_stdin_never_as_an_argument() {
     let (ok, _, err, _) = d.cli(&["secret", "remove", "github-token"]);
     assert!(!ok && err.contains("no secret"), "{err}");
 }
+
+/// Runs the CLI with a deadline: a second open of a named pipe would block.
+fn cli_within(d: &Daemon, args: &[&str], seconds: u64) -> (bool, String, String) {
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_localcron"))
+        .args(args)
+        .env("LOCALCRON_HOME", d.home())
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(seconds);
+    while child.try_wait().unwrap().is_none() {
+        if std::time::Instant::now() > deadline {
+            let _ = child.kill();
+            panic!("{args:?} did not end: it may have opened the pipe twice");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let out = child.wait_with_output().unwrap();
+    (out.status.success(), String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned())
+}
+
+#[test]
+fn a_secret_from_a_key_of_a_env_file_a_named_pipe_or_stdin() {
+    let d = Daemon::start();
+    let env = d.home().join("app.env");
+    std::fs::write(&env, "# app\nexport GH_TOKEN=ghp_from_file\nOTHER=x\n").unwrap();
+    let file = env.to_str().unwrap();
+    let (ok, out, err) = cli_within(&d, &["secret", "set", "github-token", "--key", "GH_TOKEN", "--env-file", file], 10);
+    assert!(ok && out.contains("Stored github-token"), "{out}{err}");
+
+    // A named pipe, as 1Password Environments mounts a .env: one writer, one read.
+    let pipe = d.home().join("op.env");
+    let path = std::ffi::CString::new(pipe.to_str().unwrap()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+    let writer_path = pipe.clone();
+    let writer = std::thread::spawn(move || {
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new().write(true).open(writer_path).unwrap();
+        f.write_all(b"OPENAI_API_KEY=\"sk-from-pipe\"\n").unwrap();
+    });
+    let (ok, out, err) = cli_within(&d, &["secret", "set", "openai", "--key", "OPENAI_API_KEY", "--env-file", pipe.to_str().unwrap()], 10);
+    assert!(ok && out.contains("Stored openai"), "{out}{err}");
+    writer.join().unwrap();
+
+    let (ok, out, err, _) = d.cli_with_stdin(&["secret", "set", "other", "--key", "OTHER"], "OTHER=from-stdin-1\n");
+    assert!(ok && out.contains("Stored other"), "{out}{err}");
+
+    // Errors name keys, never values.
+    let (ok, _, err) = cli_within(&d, &["secret", "set", "x", "--key", "NOPE", "--env-file", file], 10);
+    assert!(!ok && err.contains("NOPE is not in the .env; it has GH_TOKEN, OTHER") && !err.contains("ghp_"), "{err}");
+    let (ok, _, err) = cli_within(&d, &["secret", "set", "x", "--env-file", file], 10);
+    assert!(!ok && err.contains("--key"), "{err}");
+
+    let (_, list, _, _) = d.cli(&["secret", "list"]);
+    for name in ["github-token", "openai", "other"] {
+        assert!(list.contains(name), "{list}");
+    }
+    assert!(!list.contains("ghp_from_file") && !list.contains("sk-from-pipe"), "{list}");
+}

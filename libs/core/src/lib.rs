@@ -8,6 +8,7 @@
 //! - `note`: the text for Claude Code and Codex; `help`: the help page.
 
 pub mod api;
+pub mod dotenv;
 pub mod instance;
 pub mod job;
 pub mod help;

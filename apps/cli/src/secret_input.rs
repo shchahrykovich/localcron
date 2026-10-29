@@ -4,6 +4,7 @@
 //! in `ps`.
 
 use std::io::{BufRead, Read, Write};
+use std::path::Path;
 
 use anyhow::{Context, bail};
 
@@ -11,6 +12,27 @@ pub fn read_value(name: &str) -> anyhow::Result<String> {
     // SAFETY: isatty only reads the descriptor.
     let value = if unsafe { libc::isatty(0) } == 1 { prompt(name)? } else { from_reader(std::io::stdin().lock())? };
     localcron_core::secret::check_value(&value).map_err(anyhow::Error::msg)?;
+    Ok(value)
+}
+
+/// The value of `key` in a .env: the file (or named pipe) `file`, or stdin.
+/// A named pipe is opened and read once: 1Password Environments asks the
+/// user at each read.
+pub fn read_from_env(key: &str, file: Option<&Path>) -> anyhow::Result<String> {
+    let text = match file {
+        Some(path) => std::fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?,
+        None => {
+            // SAFETY: isatty only reads the descriptor.
+            if unsafe { libc::isatty(0) } == 1 {
+                bail!("pipe the .env in (cat .env | …) or give --env-file PATH");
+            }
+            let mut text = String::new();
+            std::io::stdin().lock().read_to_string(&mut text).context("cannot read the .env from stdin")?;
+            text
+        }
+    };
+    let value = localcron_core::dotenv::lookup(&text, key).map_err(anyhow::Error::msg)?;
+    localcron_core::secret::check_value(&value).map_err(|e| anyhow::anyhow!("{key}: {e}"))?;
     Ok(value)
 }
 

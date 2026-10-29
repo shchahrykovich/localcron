@@ -2,6 +2,7 @@
 
 mod client;
 mod mcp;
+mod secret_input;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -13,8 +14,9 @@ use chrono::{DateTime, FixedOffset, Local};
 use clap::{Args, Parser, Subcommand};
 use localcron_core::api::{
     CancelRunParams, Config, Empty, GetRunLogParams, GetRunLogResult, IdParams, JobResult, JobView, ListJobsResult, ListRunsParams,
-    ListRunsResult, PreviewScheduleParams, PreviewScheduleResult, RunResult, SetConfigParams, SetJobEnabledParams,
-    SetJobParams, SetJobResult, StatusResult,
+    ListRunsResult, ListSecretsResult, NameParams, PreviewScheduleParams, PreviewScheduleResult, RemoveSecretResult, RunResult,
+    SecretInfo, SecretState, SetConfigParams, SetJobEnabledParams, SetJobParams, SetJobResult, SetSecretParams, SetSecretResult,
+    StatusResult,
 };
 use localcron_core::instance::Instance;
 use localcron_core::job::{DEFAULT_TIMEOUT_SECS, Job, JobKind};
@@ -96,6 +98,9 @@ enum Command {
         #[arg(long)]
         keep_runs: Option<u32>,
     },
+    /// Values for jobs, such as API tokens, kept in the macOS Keychain.
+    #[command(subcommand)]
+    Secret(SecretCommand),
     /// The MCP server for coding agents, over stdio.
     Mcp,
     /// Print the note for Claude Code and Codex.
@@ -103,6 +108,26 @@ enum Command {
     /// Print the note (used by the app build).
     #[command(hide = true)]
     Note,
+}
+
+#[derive(Subcommand)]
+enum SecretCommand {
+    /// Store a value in the Keychain. It is asked for with no echo, or read
+    /// from stdin: `pbpaste | localcron secret set NAME`. There is no
+    /// argument for it, so it never stays in the shell history.
+    Set {
+        /// Letters, digits, '.', '_' and '-': github-token.
+        name: String,
+        /// How to make a new value: where, which scopes, when it expires.
+        #[arg(long)]
+        description: Option<String>,
+    },
+    /// Change only the description.
+    Describe { name: String, description: String },
+    /// The secrets, without their values.
+    List,
+    /// Remove a secret and its value.
+    Remove { name: String },
 }
 
 #[derive(Args)]
@@ -135,6 +160,10 @@ struct AddArgs {
     /// NAME=VALUE. Repeat it.
     #[arg(long = "env")]
     env: Vec<String>,
+    /// NAME=SECRET: the variable NAME gets the value of the secret SECRET.
+    /// Repeat it. Set the value with `localcron secret set SECRET`.
+    #[arg(long = "secret-env")]
+    secret_env: Vec<String>,
     /// 90s, 30m, 2h. Default 1h.
     #[arg(long)]
     timeout: Option<String>,
@@ -233,6 +262,12 @@ fn run(cli: Cli, instance: &Instance, paths: &Paths) -> anyhow::Result<ExitCode>
                 let r: SetJobResult = serde_json::from_value(v)?;
                 println!("{} {}", if r.created { "Added" } else { "Changed" }, r.job.job.id);
                 print_job(&r.job);
+                if !r.missing_secrets.is_empty() {
+                    println!("\nNot set yet; its runs fail until you run:");
+                    for m in &r.missing_secrets {
+                        println!("  {}", m.set_command);
+                    }
+                }
             }
         }
         Command::Remove { id } => {
@@ -326,6 +361,7 @@ fn run(cli: Cli, instance: &Instance, paths: &Paths) -> anyhow::Result<ExitCode>
                 }
             }
         }
+        Command::Secret(command) => secret(&call, instance, command, json)?,
         Command::Config { max_concurrent, keep_runs } => {
             let v = if max_concurrent.is_none() && keep_runs.is_none() {
                 call("get_config", serde_json::to_value(Empty {})?)?
@@ -341,6 +377,87 @@ fn run(cli: Cli, instance: &Instance, paths: &Paths) -> anyhow::Result<ExitCode>
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+fn secret(
+    call: &dyn Fn(&str, Value) -> Result<Value, client::ClientError>,
+    instance: &Instance,
+    command: SecretCommand,
+    json: bool,
+) -> anyhow::Result<()> {
+    let show = |v: &Value| -> anyhow::Result<()> {
+        println!("{}", serde_json::to_string_pretty(v)?);
+        Ok(())
+    };
+    match command {
+        SecretCommand::Set { name, description } => {
+            localcron_core::secret::check_name(&name).map_err(anyhow::Error::msg)?;
+            let value = secret_input::read_value(&name)?;
+            let v = call("set_secret", serde_json::to_value(SetSecretParams { name, value: Some(value), description })?)?;
+            if json {
+                return show(&v);
+            }
+            let r: SetSecretResult = serde_json::from_value(v)?;
+            println!("{} {} in the Keychain.", if r.created { "Stored" } else { "Replaced" }, r.secret.name);
+            if r.secret.description.is_empty() {
+                println!("Add how to make a new one: {} secret describe {} \"<where, scopes, expiry>\"", instance.cli(), r.secret.name);
+            }
+            if !r.secret.used_by.is_empty() {
+                println!("Used by: {}", r.secret.used_by.join(", "));
+            }
+        }
+        SecretCommand::Describe { name, description } => {
+            let v = call("set_secret", serde_json::to_value(SetSecretParams { name, value: None, description: Some(description) })?)?;
+            if json {
+                return show(&v);
+            }
+            print_secret(&serde_json::from_value::<SetSecretResult>(v)?.secret);
+        }
+        SecretCommand::List => {
+            let v = call("list_secrets", serde_json::to_value(Empty {})?)?;
+            if json {
+                return show(&v);
+            }
+            let list: ListSecretsResult = serde_json::from_value(v)?;
+            if list.secrets.is_empty() {
+                println!("No secrets. Add one: {} secret set <name> --description \"<how to make a new one>\"", instance.cli());
+            }
+            for s in &list.secrets {
+                print_secret(s);
+            }
+        }
+        SecretCommand::Remove { name } => {
+            let v = call("remove_secret", serde_json::to_value(NameParams { name: name.clone() })?)?;
+            if json {
+                return show(&v);
+            }
+            let r: RemoveSecretResult = serde_json::from_value(v)?;
+            if !r.removed {
+                bail!("no secret {name:?}");
+            }
+            println!("Removed {name}");
+            if !r.used_by.is_empty() {
+                println!("Still named by {}: their runs fail until it is set again.", r.used_by.join(", "));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn print_secret(s: &SecretInfo) {
+    let state = match s.state {
+        SecretState::Ok => "ok".to_string(),
+        SecretState::Missing => format!("missing: {}", s.message),
+        SecretState::Unreadable => format!("cannot be read: {}", s.message),
+    };
+    let used = if s.used_by.is_empty() { String::new() } else { format!(", used by {}", s.used_by.join(", ")) };
+    println!("{:<24} {state} (set {}{used})", s.name, when(&s.updated_at));
+    if !s.description.is_empty() {
+        println!("    {}", s.description);
+    }
+    if s.state != SecretState::Ok {
+        println!("    set it again: {}", s.set_command);
+    }
 }
 
 fn set_enabled(
@@ -404,6 +521,11 @@ impl AddArgs {
             let (k, v) = pair.split_once('=').with_context(|| format!("--env {pair:?}: use NAME=VALUE"))?;
             env.insert(k.to_string(), v.to_string());
         }
+        let mut secret_env = BTreeMap::new();
+        for pair in self.secret_env {
+            let (k, v) = pair.split_once('=').with_context(|| format!("--secret-env {pair:?}: use NAME=SECRET"))?;
+            secret_env.insert(k.to_string(), v.to_string());
+        }
         let timeout_secs = match self.timeout {
             Some(t) => parse_duration(&t)?,
             None => DEFAULT_TIMEOUT_SECS,
@@ -419,6 +541,7 @@ impl AddArgs {
             args: self.args,
             dir: dir.to_string_lossy().into_owned(),
             env,
+            secret_env,
             timeout_secs,
             enabled: !self.disabled,
             catch_up: !self.no_catch_up,
@@ -491,6 +614,9 @@ fn print_job(job: &JobView) {
     println!("timeout:   {} s, catch up: {}", j.timeout_secs, j.catch_up);
     for (k, v) in &j.env {
         println!("env:       {k}={v}");
+    }
+    for (k, name) in &j.secret_env {
+        println!("secret:    {k} from {name}");
     }
     if !j.note.is_empty() {
         println!("note:      {}", j.note);

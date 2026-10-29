@@ -14,3 +14,4 @@ pub mod note;
 pub mod paths;
 pub mod run;
 pub mod schedule;
+pub mod secret;

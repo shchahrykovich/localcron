@@ -22,6 +22,8 @@ public struct JobDraft: Equatable, Sendable {
     public var note: String
     /// Kept as it was: the form does not edit it.
     public var env: [String: String]
+    /// Kept as it was: the form does not edit it.
+    public var secretEnv: [String: String]
 
     /// A new Claude job on weekday mornings in the home folder.
     public init(home: URL = FileManager.default.homeDirectoryForCurrentUser) {
@@ -40,6 +42,7 @@ public struct JobDraft: Equatable, Sendable {
         catchUp = true
         note = ""
         env = [:]
+        secretEnv = [:]
     }
 
     public init(job: Job) {
@@ -58,6 +61,7 @@ public struct JobDraft: Equatable, Sendable {
         catchUp = job.catchUp
         note = job.note
         env = job.env
+        secretEnv = job.secretEnv
     }
 
     /// Permission modes `claude --permission-mode` takes. Empty uses the
@@ -87,6 +91,7 @@ public struct JobDraft: Equatable, Sendable {
             args: agent ? Formatting.splitArgs(argsText) : [],
             dir: trimmed(dir) ?? "",
             env: env,
+            secretEnv: secretEnv,
             timeoutSecs: UInt64(max(1, timeoutMinutes)) * 60,
             enabled: enabled,
             catchUp: catchUp,

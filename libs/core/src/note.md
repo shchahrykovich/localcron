@@ -22,6 +22,7 @@ The MCP server `{{CLI}}` has these tools. The CLI `{{CLI}}` does the same
   While paused no scheduled run starts; `run_job` still works.
 - `list_runs`, `get_run_log`: status, exit code and output of past runs.
 - `preview_schedule`: the next times of a schedule, and the schedule in words.
+- `list_secrets`: the secrets jobs can use, without their values.
 
 ## How to add a job
 
@@ -39,14 +40,47 @@ The MCP server `{{CLI}}` has these tools. The CLI `{{CLI}}` does the same
      the user agrees to what the job may do.
    - `codex`: `prompt` is the task. It runs `codex exec <prompt>` in `dir`.
    - `shell`: `command` runs with the user's shell in `dir`.
-4. `dir` is the project folder. The MCP server uses your current folder when
+4. A token or key the job needs goes in `secret_env`, never in `env` or the
+   prompt: see Secrets below.
+5. `dir` is the project folder. The MCP server uses your current folder when
    you leave it out.
-5. Tell the user the job id, the schedule in words (`schedule_text` in the
+6. Tell the user the job id, the schedule in words (`schedule_text` in the
    reply) and the next run time (`next_run`).
 
 The prompt of a scheduled agent must stand alone: the agent starts with no
 memory of this conversation. Say what to do, where, and where to write the
 result (a file, a pull request, a message).
+
+## Secrets
+
+A job gets a secret, such as an API token, as an environment variable. The
+value is kept in the macOS Keychain, never in the job, and runs read it with
+nobody there.
+
+- In `add_job`, `secret_env` maps a variable to a secret name:
+  `{"GH_TOKEN": "github-token"}`. Use `env` only for values that are not
+  secret. `list_secrets` shows the names that exist: reuse one when it fits.
+- You never see or send a secret value. No tool takes or returns one.
+- When the reply has `missing_secrets`, give the user each `set_command` to
+  run in their own terminal, with a description that says how to make a new
+  value when this one expires or leaks: where, which scopes, the expiry.
+  Write it as one line:
+  `{{CLI}} secret set github-token --description "GitHub fine-grained token, repo shop, Contents read/write, github.com/settings/tokens, expires 2027-01-31"`.
+  The command asks for the value with no echo. From the clipboard or a
+  password manager: `pbpaste | {{CLI}} secret set github-token` or
+  `op read "op://Private/GitHub/token" | {{CLI}} secret set github-token`.
+- Do not suggest running it with `!` in this chat, and never ask the user to
+  paste the value here: the chat goes to the model provider. If the user
+  pastes a secret anyway, do not use it; tell them it is now in the chat and
+  that they should make a new one.
+- The command has no argument for the value, so it never stays in the shell
+  history. Do not invent one.
+- A `claude` or `codex` job can read its own environment and send it to its
+  model. Tell the user when a job of that kind gets a secret.
+- A secret with state `unreadable` or `missing` (`list_secrets`), or a run
+  that failed with "secret … is not set": give the user its `set_command`.
+- `{{CLI}} secret describe NAME "<text>"` changes only the description;
+  `{{CLI}} secret remove NAME` removes the secret.
 
 ## Runs
 

@@ -49,9 +49,13 @@ pub struct AddJobArgs {
     /// claude and codex: more arguments, for example ["--allowedTools", "Read Edit Bash(git *)"].
     #[serde(default)]
     pub args: Option<Vec<String>>,
-    /// Environment variables for the run.
+    /// Environment variables for the run. Not for tokens or keys: use secret_env.
     #[serde(default)]
     pub env: Option<BTreeMap<String, String>>,
+    /// Variable name to secret name, for tokens and keys: {"GH_TOKEN": "github-token"}. Names only: the user sets the
+    /// value in a terminal with the set_command the reply gives in missing_secrets. Never ask for the value.
+    #[serde(default)]
+    pub secret_env: Option<BTreeMap<String, String>>,
     /// Stop the run after this many minutes. Default 60.
     #[serde(default)]
     pub timeout_minutes: Option<u64>,
@@ -87,6 +91,7 @@ impl AddJobArgs {
             args: self.args.unwrap_or_default(),
             dir,
             env: self.env.unwrap_or_default(),
+            secret_env: self.secret_env.unwrap_or_default(),
             timeout_secs: self.timeout_minutes.map_or(DEFAULT_TIMEOUT_SECS, |m| m * 60),
             enabled: self.enabled.unwrap_or(true),
             catch_up: self.catch_up.unwrap_or(true),
@@ -199,7 +204,8 @@ impl LocalCronMcp {
 
     #[tool(description = "Create a job that runs on a schedule: a Claude Code or Codex agent with a prompt, or a \
 shell command. Returns the job with schedule_text (the schedule in words) and next_run: tell the user both. An \
-existing id is an error unless replace is true.")]
+existing id is an error unless replace is true. missing_secrets lists secrets in secret_env that are not set: give \
+the user each set_command to run in their own terminal, with --description saying how to make a new value.")]
     async fn add_job(&self, Parameters(args): Parameters<AddJobArgs>) -> Result<CallToolResult, ErrorData> {
         Ok(match args.into_params(std::env::current_dir().ok()) {
             Ok(params) => self.call("set_job", params).await,
@@ -264,6 +270,13 @@ why it is not valid.")]
         Ok(self.call("preview_schedule", PreviewScheduleParams { schedule: args.schedule, count: args.count }).await)
     }
 
+    #[tool(description = "The secrets jobs can use in secret_env: name, description (how to make a new value), \
+state (ok, missing, unreadable), the jobs that use it, and set_command for the user. Never the values: no tool \
+sets or returns a value.")]
+    async fn list_secrets(&self, Parameters(_): Parameters<NoArgs>) -> Result<CallToolResult, ErrorData> {
+        Ok(self.call("list_secrets", Empty {}).await)
+    }
+
     #[tool(description = "Daemon version, number of jobs, runs in progress and queued, the most runs at once, \
 paused, and the next run.")]
     async fn status(&self, Parameters(_): Parameters<NoArgs>) -> Result<CallToolResult, ErrorData> {
@@ -303,6 +316,18 @@ mod tests {
         assert_eq!(p.job.timeout_secs, 300);
         assert_eq!(p.job.kind, JobKind::Claude);
         assert!(!p.replace && p.job.enabled && p.job.catch_up);
+    }
+
+    #[test]
+    fn secret_env_takes_names_and_there_is_no_field_for_a_value() {
+        let p = args(serde_json::json!({"id": "a", "schedule": "@daily", "kind": "shell", "command": "ls", "dir": "/tmp",
+            "secret_env": {"GH_TOKEN": "github-token"}}))
+        .into_params(None)
+        .unwrap();
+        assert_eq!(p.job.secret_env["GH_TOKEN"], "github-token");
+        let bad: Result<AddJobArgs, _> = serde_json::from_value(serde_json::json!({"id": "a", "schedule": "@daily",
+            "kind": "shell", "command": "ls", "secrets": {"github-token": "ghp_x"}}));
+        assert!(bad.is_err());
     }
 
     #[test]

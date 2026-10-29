@@ -7,7 +7,8 @@ use std::sync::Arc;
 
 use localcron_core::api::{
     self, ApiError, CancelRunParams, ErrorCode, GetRunLogParams, HelloParams, HelloResult, IdParams, JobResult, ListRunsParams,
-    PreviewScheduleParams, Request, Response, RunResult, SetConfigParams, SetJobEnabledParams, SetJobParams,
+    NameParams, PreviewScheduleParams, Request, Response, RunResult, SetConfigParams, SetJobEnabledParams, SetJobParams,
+    SetSecretParams,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -113,6 +114,9 @@ pub fn dispatch(engine: &Engine, request: Request) -> Result<Value, ApiError> {
         "preview_schedule" => to_value(engine.preview_schedule(params::<PreviewScheduleParams>(p)?)?),
         "get_config" => to_value(engine.get_config()),
         "set_config" => to_value(engine.set_config(params::<SetConfigParams>(p)?)?),
+        "list_secrets" => to_value(engine.list_secrets()),
+        "set_secret" => to_value(engine.set_secret(params::<SetSecretParams>(p)?)?),
+        "remove_secret" => to_value(engine.remove_secret(&params::<NameParams>(p)?.name)?),
         other => Err(ApiError::new(ErrorCode::UnknownMethod, format!("unknown method {other:?}"))),
     }
 }

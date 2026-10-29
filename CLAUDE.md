@@ -51,6 +51,16 @@ LocalCron.app (Swift) ───────────────────�
   in children, or they could not be stopped. `shellenv.rs` gets PATH from the
   login shell. A missed time is caught up once, from the newest `due_at` in
   `runs.json` or the job's `updated_at`.
+- Secrets (`libs/core/src/secret.rs`, `apps/daemon/src/secrets.rs`): a job's
+  `secret_env` maps a variable to a secret name. Only the daemon writes and
+  reads the values, in the login keychain (service `<bundle id>.secrets`),
+  so the item's access list names the daemon and a run at night needs no
+  dialog. Keychain dialogs are off for the whole daemon: a read that would
+  need one fails at once. `secrets.json` holds names and descriptions only.
+  No reply, log line or file may contain a value; the value comes only from
+  `localcron secret set` (prompt or stdin, never an argument), never from
+  MCP. Tests set `LOCALCRON_TEST_KEYCHAIN` to a keychain file in the temp
+  folder (debug builds only), so they never touch the login keychain.
 - `apps/cli` (`localcron`): stateless. Sync socket client; `localcron mcp` is
   the MCP server (rmcp on a current-thread tokio runtime). `add_job` takes the
   MCP server's current folder as the default `dir`. `apps/cli` must not

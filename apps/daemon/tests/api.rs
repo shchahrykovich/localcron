@@ -26,6 +26,8 @@ impl Daemon {
             .env("HOME", home.path())
             .env("LOCALCRON_PATH", "/usr/bin:/bin")
             .env("SHELL", "/bin/sh")
+            // Never the login keychain.
+            .env("LOCALCRON_TEST_KEYCHAIN", home.path().join("test.keychain"))
             .spawn()
             .unwrap();
         let d = Daemon { child, home };
@@ -347,4 +349,109 @@ fn preview_and_errors() {
     assert_eq!(d.call("explode", json!({})).unwrap_err()["code"], "unknown_method");
     assert_eq!(d.call("hello", json!({"client": "t", "api_version": "9.0"})).unwrap_err()["code"], "version_mismatch");
     assert_eq!(d.call("set_config", json!({"max_concurrent": 0})).unwrap_err()["code"], "invalid");
+}
+
+#[test]
+fn a_job_gets_its_secret_and_no_reply_or_file_has_the_value() {
+    use std::os::unix::fs::PermissionsExt;
+    let d = Daemon::start();
+    // The log header shows the command, so it must not spell the value.
+    let mut job = d.shell_job("deploy", r#"test "ghp_${GH_TOKEN#ghp_}" = "$GH_TOKEN" && test "${GH_TOKEN#ghp_}" = value1 && echo token-ok"#);
+    job["secret_env"] = json!({"GH_TOKEN": "github-token"});
+
+    // Saved, but the reply says what is missing and how to set it.
+    let added = d.ok("set_job", json!({"job": job}));
+    assert_eq!(
+        added["missing_secrets"],
+        json!([{"name": "github-token", "env": "GH_TOKEN", "set_command": "localcron secret set github-token"}])
+    );
+    let run = d.ok("run_job", json!({"id": "deploy"}))["run"]["id"].as_str().unwrap().to_string();
+    let failed = d.wait_status(&run, "failed");
+    assert_eq!(failed["message"], "secret github-token is not set: run localcron secret set github-token in a terminal");
+
+    let set = d.ok(
+        "set_secret",
+        json!({"name": "github-token", "value": "ghp_value1", "description": "GitHub fine-grained token, repo shop, github.com/settings/tokens"}),
+    );
+    assert_eq!(set["created"], true);
+    assert_eq!(set["secret"]["state"], "ok");
+    assert_eq!(set["secret"]["used_by"], json!(["deploy"]));
+    assert_eq!(set["secret"]["set_command"], "localcron secret set github-token");
+    assert!(!set.to_string().contains("ghp_value1"), "{set}");
+
+    let replaced = d.ok("set_job", json!({"job": job, "replace": true}));
+    assert!(replaced.get("missing_secrets").is_none(), "{replaced}");
+    let run = d.ok("run_job", json!({"id": "deploy"}))["run"]["id"].as_str().unwrap().to_string();
+    d.wait_status(&run, "succeeded");
+    let log = d.ok("get_run_log", json!({"run_id": run}))["text"].as_str().unwrap().to_string();
+    assert!(log.contains("token-ok") && log.contains("# secrets: GH_TOKEN from github-token"), "{log}");
+    assert!(!log.contains("ghp_value1"), "{log}");
+
+    // A new value; the description stays.
+    d.ok("set_secret", json!({"name": "github-token", "value": "ghp_value2"}));
+    let list = d.ok("list_secrets", json!({}));
+    assert_eq!(list["secrets"][0]["description"], "GitHub fine-grained token, repo shop, github.com/settings/tokens");
+    assert!(!list.to_string().contains("ghp_value"), "{list}");
+    let run = d.ok("run_job", json!({"id": "deploy"}))["run"]["id"].as_str().unwrap().to_string();
+    d.wait_status(&run, "failed");
+
+    // Only the description; the time of the value stays.
+    let before = list["secrets"][0]["updated_at"].clone();
+    let described = d.ok("set_secret", json!({"name": "github-token", "description": "expires 2027-01-31"}));
+    assert_eq!(described["secret"]["description"], "expires 2027-01-31");
+    assert_eq!(described["secret"]["updated_at"], before);
+    assert_eq!(d.call("set_secret", json!({"name": "nope", "description": "x"})).unwrap_err()["code"], "not_found");
+
+    for file in ["jobs.json", "runs.json", "secrets.json"] {
+        let path = d.home.path().join(file);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("ghp_value"), "{file}: {text}");
+        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600, "{file}");
+    }
+
+    let removed = d.ok("remove_secret", json!({"name": "github-token"}));
+    assert_eq!(removed, json!({"removed": true, "used_by": ["deploy"]}));
+    assert_eq!(d.ok("remove_secret", json!({"name": "github-token"}))["removed"], false);
+    assert_eq!(d.ok("list_secrets", json!({})), json!({"secrets": []}));
+    let run = d.ok("run_job", json!({"id": "deploy"}))["run"]["id"].as_str().unwrap().to_string();
+    assert!(d.wait_status(&run, "failed")["message"].as_str().unwrap().contains("is not set"));
+}
+
+#[test]
+fn secrets_survive_a_restart_and_bad_input_is_refused() {
+    let d = Daemon::start();
+    d.ok("set_secret", json!({"name": "openai", "value": "sk-1", "description": "platform.openai.com/api-keys"}));
+    let d = Daemon::start_in(d.stop());
+    let list = d.ok("list_secrets", json!({}));
+    assert_eq!(list["secrets"][0]["name"], "openai");
+    assert_eq!(list["secrets"][0]["state"], "ok");
+
+    for bad in [
+        json!({"name": "a b", "value": "x"}),
+        json!({"name": "a", "value": ""}),
+        json!({"name": "a", "value": "x", "description": "d".repeat(501)}),
+    ] {
+        assert_eq!(d.call("set_secret", bad.clone()).unwrap_err()["code"], "invalid", "{bad}");
+    }
+    let mut job = d.shell_job("j", "true");
+    job["secret_env"] = json!({"A": "bad name"});
+    assert_eq!(d.call("set_job", json!({"job": job})).unwrap_err()["code"], "invalid");
+}
+
+#[test]
+fn a_value_removed_in_keychain_access_shows_as_missing() {
+    let d = Daemon::start();
+    d.ok("set_secret", json!({"name": "gone", "value": "v"}));
+    // What the user does in Keychain Access, done on the test keychain.
+    let keychain = d.home.path().join("test.keychain");
+    let status = Command::new("security")
+        .args(["delete-generic-password", "-s", "dev.localcron.app.secrets", "-a", "gone"])
+        .arg(&keychain)
+        .stdout(std::process::Stdio::null())
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let list = d.ok("list_secrets", json!({}));
+    assert_eq!(list["secrets"][0]["state"], "missing");
+    assert_eq!(list["secrets"][0]["message"], "no value in the Keychain");
 }

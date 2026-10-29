@@ -20,18 +20,21 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, FixedOffset, Local, Timelike};
 use localcron_core::api::{
     self, ApiError, CancelRunResult, Config, ErrorCode, GetRunLogParams, GetRunLogResult, JobView, ListJobsResult, ListRunsParams,
-    ListRunsResult, NextRun, PreviewScheduleParams, PreviewScheduleResult, RemoveJobResult, SetConfigParams, SetJobParams,
-    SetJobResult, StatusResult,
+    ListRunsResult, ListSecretsResult, MissingSecret, NextRun, PreviewScheduleParams, PreviewScheduleResult, RemoveJobResult,
+    RemoveSecretResult, SecretInfo, SecretState, SetConfigParams, SetJobParams, SetJobResult, SetSecretParams, SetSecretResult,
+    StatusResult,
 };
 use localcron_core::instance::Instance;
 use localcron_core::job::Job;
 use localcron_core::paths::Paths;
 use localcron_core::run::{Run, RunStatus, Trigger};
 use localcron_core::schedule::Schedule;
+use localcron_core::secret;
 
 use crate::log;
+use crate::secrets::{Keychain, ReadError};
 use crate::shellenv::ShellEnvCache;
-use crate::store::{self, JobsFile, RunsFile};
+use crate::store::{self, JobsFile, RunsFile, SecretEntry, SecretsFile};
 
 pub const DAEMON_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -87,6 +90,8 @@ struct State {
     queue: VecDeque<String>,
     running: HashMap<String, Active>,
     config: Config,
+    /// Names and descriptions; the values are in the Keychain.
+    secrets: BTreeMap<String, SecretEntry>,
     stopping: bool,
 }
 
@@ -97,6 +102,7 @@ pub struct Engine {
     state: Mutex<State>,
     wake: Condvar,
     shell_env: ShellEnvCache,
+    keychain: Keychain,
 }
 
 impl Engine {
@@ -109,6 +115,9 @@ impl Engine {
         problem.into_iter().for_each(|p| log!("{p}"));
         let (config, problem) = store::load_config(&paths.config());
         problem.into_iter().for_each(|p| log!("{p}"));
+        let (secrets_file, problem): (SecretsFile, _) = store::load(&paths.secrets());
+        problem.into_iter().for_each(|p| log!("{p}"));
+        let keychain = Keychain::for_instance(&instance);
 
         let started = now();
         let mut lost = 0;
@@ -151,10 +160,12 @@ impl Engine {
                 queue: VecDeque::new(),
                 running: HashMap::new(),
                 config,
+                secrets: secrets_file.secrets.into_iter().map(|s| (s.name.clone(), s)).collect(),
                 stopping: false,
             }),
             wake: Condvar::new(),
             shell_env: ShellEnvCache::default(),
+            keychain,
         });
         if lost > 0 {
             let st = engine.lock();
@@ -340,6 +351,14 @@ impl Engine {
         if !Path::new(&job.dir).is_dir() {
             return self.finish(run_id, None, format!("the folder {} does not exist", job.dir));
         }
+        let secret_env = match self.read_secrets(job) {
+            Ok(values) => values,
+            Err(why) => return self.finish(run_id, None, why),
+        };
+        if !job.secret_env.is_empty() {
+            let names: Vec<String> = job.secret_env.iter().map(|(var, name)| format!("{var} from {name}")).collect();
+            let _ = writeln!(file, "# secrets: {}\n", names.join(", "));
+        }
         let (program, args) = job.argv(&env.shell);
         let (Ok(out), Ok(err)) = (file.try_clone(), file.try_clone()) else {
             return self.finish(run_id, None, "cannot share the log file with the process".into());
@@ -356,6 +375,7 @@ impl Engine {
             .env("LOCALCRON_JOB_ID", &job.id)
             .env("LOCALCRON_RUN_ID", run_id)
             .envs(&job.env)
+            .envs(secret_env)
             // Its own process group: a stop reaches every process it starts.
             .process_group(0);
         crate::unblock_signals_in_child(&mut command);
@@ -397,6 +417,24 @@ impl Engine {
         };
         let code = status.ok().and_then(|s| s.code());
         self.finish(run_id, code, message);
+    }
+
+    /// The values of the job's `secret_env`, read from the Keychain without
+    /// the state lock. An error says which secret and the command that sets it.
+    fn read_secrets(&self, job: &Job) -> Result<Vec<(String, std::ffi::OsString)>, String> {
+        use std::os::unix::ffi::OsStringExt;
+        let mut values = Vec::with_capacity(job.secret_env.len());
+        for (var, name) in &job.secret_env {
+            let command = secret::set_command(&self.instance, name);
+            match self.keychain.get(name) {
+                Ok(value) => values.push((var.clone(), std::ffi::OsString::from_vec(value))),
+                Err(ReadError::Missing) => return Err(format!("secret {name} is not set: run {command} in a terminal")),
+                Err(ReadError::Unreadable(why)) => {
+                    return Err(format!("secret {name} cannot be read: {why}. Run {command} in a terminal to store it again"));
+                }
+            }
+        }
+        Ok(values)
     }
 
     /// Record the end of a run. `code` is None when the process never
@@ -594,9 +632,16 @@ impl Engine {
         }
         log!("job {id}: {}", if created { "added" } else { "changed" });
         let view = self.view(&st, &st.jobs[&id]);
+        let missing_secrets = view
+            .job
+            .secret_env
+            .iter()
+            .filter(|(_, name)| !st.secrets.contains_key(*name))
+            .map(|(var, name)| MissingSecret { name: name.clone(), env: var.clone(), set_command: secret::set_command(&self.instance, name) })
+            .collect();
         drop(st);
         self.notify();
-        Ok(SetJobResult { job: view, created })
+        Ok(SetJobResult { job: view, created, missing_secrets })
     }
 
     pub fn remove_job(&self, id: &str) -> ApiResult<RemoveJobResult> {
@@ -800,6 +845,103 @@ impl Engine {
         drop(st);
         self.notify();
         Ok(config)
+    }
+
+    // MARK: Secrets
+
+    fn save_secrets(&self, st: &State) -> ApiResult<()> {
+        let file = SecretsFile { version: 1, secrets: st.secrets.values().cloned().collect() };
+        store::save(&self.paths.secrets(), &file).map_err(|e| {
+            log!("cannot save {}: {e}", self.paths.secrets().display());
+            internal(format!("cannot save {}: {e}", self.paths.secrets().display()))
+        })
+    }
+
+    fn used_by(st: &State, name: &str) -> Vec<String> {
+        st.jobs.values().filter(|s| s.job.secret_env.values().any(|n| n == name)).map(|s| s.job.id.clone()).collect()
+    }
+
+    /// `state` from the Keychain; call it without the state lock.
+    fn secret_info(&self, entry: &SecretEntry, used_by: Vec<String>) -> SecretInfo {
+        let (state, message) = match self.keychain.get(&entry.name) {
+            Ok(_) => (SecretState::Ok, String::new()),
+            Err(ReadError::Missing) => (SecretState::Missing, "no value in the Keychain".to_string()),
+            Err(ReadError::Unreadable(why)) => (SecretState::Unreadable, why),
+        };
+        SecretInfo {
+            name: entry.name.clone(),
+            description: entry.description.clone(),
+            updated_at: entry.updated_at,
+            state,
+            message,
+            used_by,
+            set_command: secret::set_command(&self.instance, &entry.name),
+        }
+    }
+
+    pub fn list_secrets(&self) -> ListSecretsResult {
+        let entries: Vec<(SecretEntry, Vec<String>)> = {
+            let st = self.lock();
+            st.secrets.values().map(|e| (e.clone(), Self::used_by(&st, &e.name))).collect()
+        };
+        ListSecretsResult { secrets: entries.into_iter().map(|(e, used)| self.secret_info(&e, used)).collect() }
+    }
+
+    /// The value goes to the Keychain first: when that fails nothing changes.
+    /// The value is never logged.
+    pub fn set_secret(&self, params: SetSecretParams) -> ApiResult<SetSecretResult> {
+        let name = params.name;
+        secret::check_name(&name).map_err(invalid)?;
+        if let Some(d) = &params.description {
+            secret::check_description(d).map_err(invalid)?;
+        }
+        if let Some(value) = &params.value {
+            secret::check_value(value).map_err(invalid)?;
+        } else if !self.lock().secrets.contains_key(&name) {
+            return Err(ApiError::new(ErrorCode::NotFound, format!("no secret {name:?}; give a value to make it")));
+        }
+        if let Some(value) = &params.value {
+            self.keychain.set(&name, value.as_bytes()).map_err(|e| internal(format!("cannot store {name} in the Keychain: {e}")))?;
+        }
+        let mut st = self.lock();
+        let old = st.secrets.get(&name).cloned();
+        let created = old.is_none();
+        let entry = SecretEntry {
+            name: name.clone(),
+            description: params.description.or_else(|| old.as_ref().map(|o| o.description.clone())).unwrap_or_default(),
+            updated_at: if params.value.is_some() { now() } else { old.as_ref().map_or_else(now, |o| o.updated_at) },
+        };
+        st.secrets.insert(name.clone(), entry.clone());
+        if let Err(e) = self.save_secrets(&st) {
+            match old {
+                Some(old) => st.secrets.insert(name, old),
+                None => st.secrets.remove(&name),
+            };
+            return Err(e);
+        }
+        let used_by = Self::used_by(&st, &name);
+        drop(st);
+        log!("secret {name}: {}", if created { "added" } else if params.value.is_some() { "new value" } else { "new description" });
+        Ok(SetSecretResult { secret: self.secret_info(&entry, used_by), created })
+    }
+
+    pub fn remove_secret(&self, name: &str) -> ApiResult<RemoveSecretResult> {
+        let mut st = self.lock();
+        let old = st.secrets.remove(name);
+        if old.is_some()
+            && let Err(e) = self.save_secrets(&st)
+        {
+            st.secrets.insert(name.to_string(), old.expect("checked above"));
+            return Err(e);
+        }
+        let used_by = Self::used_by(&st, name);
+        drop(st);
+        let had_value = self.keychain.delete(name).map_err(|e| internal(format!("cannot remove {name} from the Keychain: {e}")))?;
+        let removed = old.is_some() || had_value;
+        if removed {
+            log!("secret {name}: removed");
+        }
+        Ok(RemoveSecretResult { removed, used_by })
     }
 }
 

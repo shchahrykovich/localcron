@@ -98,12 +98,42 @@ matches, as in classic cron.
 launchd starts the daemon with a short PATH, where `claude`, `codex` and
 Homebrew tools are missing. Before a run, LocalCron asks your login shell for
 its PATH (`$SHELL -l -i -c`), as editors do, and keeps it for 10 minutes. A
-run also gets `LOCALCRON_JOB_ID`, `LOCALCRON_RUN_ID` and the job's own `env`.
+run also gets `LOCALCRON_JOB_ID`, `LOCALCRON_RUN_ID`, the job's own `env`
+and its secrets.
+
+## Secrets
+
+A token or a key goes in a secret, not in `env`: `env` is saved as plain
+text in `jobs.json`.
+
+```
+localcron secret set github-token --description "Fine-grained token, repo shop, github.com/settings/tokens, expires 2027-01-31"
+localcron add deploy --schedule "0 2 * * *" --command ./deploy.sh --secret-env GH_TOKEN=github-token
+localcron secret list
+```
+
+- `secret set` asks for the value with no echo, or reads it from stdin:
+  `pbpaste | localcron secret set github-token`, or from 1Password:
+  `op read "op://Private/GitHub/token" | localcron secret set github-token`.
+  There is no argument for the value, so it never stays in the shell history.
+- The daemon stores the value in your login keychain (service
+  `dev.localcron.app.secrets`) and reads it when a run starts. macOS unlocks
+  that keychain at login, so runs at night work with nobody there.
+- The description says how to make a new value when this one expires or
+  leaks. `secret describe NAME "<text>"` changes it.
+- No reply, log or file of LocalCron has the value. Agents name secrets in
+  `secret_env`; they never see or send a value. When a secret is missing,
+  the agent gives you the `localcron secret set …` command to run.
+- A `claude` or `codex` job can read its environment and send it to its
+  model: give such a job a token with narrow rights.
+- A build signed ad hoc (from source) cannot read a value that another build
+  stored: macOS ties the item to the program. `secret list` shows it as
+  `unreadable`; run `secret set` again.
 
 ## Files
 
 ```
-~/Library/Application Support/LocalCron/   jobs.json, runs.json, config.json, daemon.sock
+~/Library/Application Support/LocalCron/   jobs.json, runs.json, config.json, secrets.json (no values), daemon.sock
 ~/Library/Logs/LocalCron/                  daemon.log, runs/<job>/<run>.log
 ```
 

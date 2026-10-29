@@ -5,6 +5,7 @@
 
 mod engine;
 mod lock;
+mod secrets;
 mod shellenv;
 mod socket;
 mod store;

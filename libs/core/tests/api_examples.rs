@@ -51,6 +51,9 @@ fn every_example_decodes_and_every_method_has_one() {
                 "get_run_log" => check::<GetRunLogParams>(p, &file),
                 "preview_schedule" => check::<PreviewScheduleParams>(p, &file),
                 "set_config" => check::<SetConfigParams>(p, &file),
+                "list_secrets" => check::<Empty>(p, &file),
+                "set_secret" => check::<SetSecretParams>(p, &file),
+                "remove_secret" => check::<NameParams>(p, &file),
                 other => panic!("{file}: no params type for {other}"),
             }
         } else {
@@ -69,6 +72,9 @@ fn every_example_decodes_and_every_method_has_one() {
                 "get_run_log" => check::<GetRunLogResult>(r, &file),
                 "preview_schedule" => check::<PreviewScheduleResult>(r, &file),
                 "get_config" | "set_config" => check::<Config>(r, &file),
+                "list_secrets" => check::<ListSecretsResult>(r, &file),
+                "set_secret" => check::<SetSecretResult>(r, &file),
+                "remove_secret" => check::<RemoveSecretResult>(r, &file),
                 other => panic!("{file}: no result type for {other}"),
             }
         }

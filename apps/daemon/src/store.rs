@@ -3,7 +3,10 @@
 
 use std::fs;
 use std::io::{self, Write};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
+
+use chrono::{DateTime, FixedOffset};
 
 use localcron_core::api::Config;
 use localcron_core::job::Job;
@@ -26,12 +29,31 @@ pub struct RunsFile {
     pub runs: Vec<Run>,
 }
 
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct SecretsFile {
+    pub version: u32,
+    pub secrets: Vec<SecretEntry>,
+}
+
+/// What is not secret about a secret. The value is in the Keychain.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SecretEntry {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
+    pub updated_at: DateTime<FixedOffset>,
+}
+
+/// Only the user may read the files: a job's command and env can say more
+/// than the user wants other accounts on the Mac to see.
 pub fn save<T: Serialize>(path: &Path, value: &T) -> io::Result<()> {
     let mut text = serde_json::to_vec_pretty(value).map_err(io::Error::other)?;
     text.push(b'\n');
     let tmp = path.with_extension("json.tmp");
+    // One left by a crash keeps its old mode.
+    let _ = fs::remove_file(&tmp);
     {
-        let mut file = fs::File::create(&tmp)?;
+        let mut file = fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&tmp)?;
         file.write_all(&text)?;
         file.sync_all()?;
     }

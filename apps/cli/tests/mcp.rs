@@ -44,6 +44,7 @@ async fn the_tools_are_listed_with_instructions() {
             "get_run_log",
             "list_jobs",
             "list_runs",
+            "list_secrets",
             "preview_schedule",
             "remove_job",
             "run_job",
@@ -105,5 +106,28 @@ async fn an_agent_schedules_a_job_in_its_project_and_runs_it() {
     assert!(json_of(&r).as_str().unwrap().contains("no run"), "{r:?}");
     let r = call(&client, "set_paused", json!({"paused": false})).await;
     assert_eq!(json_of(&r)["paused"], false);
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
+async fn an_agent_names_a_secret_and_gets_the_command_for_the_user() {
+    let d = Daemon::start();
+    let client = mcp_client(d.home(), d.home()).await;
+    let r = call(&client, "add_job", json!({"id": "deploy", "schedule": "@daily", "kind": "shell", "command": "true",
+        "secret_env": {"GH_TOKEN": "github-token"}}))
+    .await;
+    assert_ne!(r.is_error, Some(true), "{r:?}");
+    assert_eq!(json_of(&r)["missing_secrets"][0]["set_command"], "localcron secret set github-token");
+
+    let (ok, _, err, _) = d.cli_with_stdin(&["secret", "set", "github-token", "--description", "github.com/settings/tokens"], "ghp_x\n");
+    assert!(ok, "{err}");
+    let list = json_of(&call(&client, "list_secrets", json!({})).await);
+    assert_eq!(list["secrets"][0]["state"], "ok");
+    assert_eq!(list["secrets"][0]["used_by"], json!(["deploy"]));
+    assert!(!list.to_string().contains("ghp_x"), "{list}");
+
+    let info = client.peer_info().unwrap();
+    let note = info.instructions.as_deref().unwrap();
+    assert!(note.contains("## Secrets") && note.contains("localcron secret set"), "{note}");
     client.cancel().await.unwrap();
 }

@@ -269,7 +269,7 @@ final class JobDraftTests: XCTestCase {
     func testRoundTripThroughTheForm() {
         let job = Job(id: "weekly-review", schedule: "0 9 * * wed", kind: .claude, prompt: "Review PRs", model: "sonnet",
                       permissionMode: "acceptEdits", args: ["--max-turns", "30"], dir: "/Users/me/shop",
-                      env: ["A": "1"], timeoutSecs: 1800, note: "n")
+                      env: ["A": "1"], secretEnv: ["GH_TOKEN": "github-token"], timeoutSecs: 1800, note: "n")
         var draft = JobDraft(job: job)
         XCTAssertFalse(draft.isNew)
         XCTAssertEqual(draft.timeoutMinutes, 30)

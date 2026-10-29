@@ -39,6 +39,8 @@ impl Daemon {
             .env("LOCALCRON_PATH", "/usr/bin:/bin")
             .env("HOME", dir.path())
             .env("SHELL", "/bin/sh")
+            // Never the login keychain.
+            .env("LOCALCRON_TEST_KEYCHAIN", dir.path().join("test.keychain"))
             .stderr(Stdio::null())
             .spawn()
             .unwrap();
@@ -63,6 +65,30 @@ impl Daemon {
             .current_dir(self.home())
             .output()
             .unwrap();
+        (
+            out.status.success(),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+            out.status.code(),
+        )
+    }
+}
+
+impl Daemon {
+    /// Run the CLI with `input` on stdin, as in `pbpaste | localcron …`.
+    pub fn cli_with_stdin(&self, args: &[&str], input: &str) -> (bool, String, String, Option<i32>) {
+        use std::io::Write;
+        let mut child = Command::new(env!("CARGO_BIN_EXE_localcron"))
+            .args(args)
+            .env("LOCALCRON_HOME", self.home())
+            .current_dir(self.home())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+        let out = child.wait_with_output().unwrap();
         (
             out.status.success(),
             String::from_utf8_lossy(&out.stdout).into_owned(),

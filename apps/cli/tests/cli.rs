@@ -116,3 +116,33 @@ fn the_note_names_this_instance() {
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(text.starts_with("# LocalCron\n") && text.contains("add_job"), "{text}");
 }
+
+#[test]
+fn secrets_from_stdin_never_as_an_argument() {
+    let d = Daemon::start();
+    let (ok, out, err, _) = d.cli(&["add", "deploy", "--schedule", "@daily", "--command", "true", "--secret-env", "GH_TOKEN=github-token"]);
+    assert!(ok, "{err}");
+    assert!(out.contains("secret:    GH_TOKEN from github-token") && out.contains("localcron secret set github-token"), "{out}");
+
+    let (ok, out, err, _) = d.cli_with_stdin(&["secret", "set", "github-token"], "ghp_from_stdin\n");
+    assert!(ok, "{err}");
+    assert!(out.contains("Stored github-token") && out.contains("secret describe github-token") && out.contains("Used by: deploy"), "{out}");
+    let (ok, out, err, _) = d.cli(&["secret", "describe", "github-token", "Expires 2027-01-31, github.com/settings/tokens"]);
+    assert!(ok && out.contains("Expires 2027-01-31"), "{err}");
+    let (_, out, _, _) = d.cli(&["secret", "list"]);
+    assert!(out.starts_with("github-token") && out.contains(" ok ") && out.contains("used by deploy"), "{out}");
+    assert!(!out.contains("ghp_from_stdin"), "{out}");
+    let (ok, _, _, code) = d.cli(&["run", "deploy", "--wait"]);
+    assert!(ok, "{code:?}");
+
+    // A value as an argument is refused by the parser.
+    let (ok, _, _, _) = d.cli(&["secret", "set", "github-token", "ghp_in_history"]);
+    assert!(!ok);
+    let (ok, _, err, _) = d.cli_with_stdin(&["secret", "set", "other"], "");
+    assert!(!ok && err.contains("stdin was empty"), "{err}");
+
+    let (ok, out, _, _) = d.cli(&["secret", "remove", "github-token"]);
+    assert!(ok && out.contains("Still named by deploy"), "{out}");
+    let (ok, _, err, _) = d.cli(&["secret", "remove", "github-token"]);
+    assert!(!ok && err.contains("no secret"), "{err}");
+}

@@ -1,7 +1,7 @@
 //! Where an instance keeps its files.
 //!
 //! ```text
-//! ~/Library/Application Support/LocalCron/   jobs.json, runs.json, config.json, daemon.sock, daemon.lock
+//! ~/Library/Application Support/LocalCron/   jobs.json, runs.json, config.json, secrets.json, daemon.sock, daemon.lock
 //! ~/Library/Logs/LocalCron/                  daemon.log, runs/<job id>/<run id>.log
 //! ```
 //!
@@ -48,6 +48,11 @@ impl Paths {
 
     pub fn config(&self) -> PathBuf {
         self.data.join("config.json")
+    }
+
+    /// Names and descriptions of the secrets. The values are in the Keychain.
+    pub fn secrets(&self) -> PathBuf {
+        self.data.join("secrets.json")
     }
 
     pub fn socket(&self) -> PathBuf {

@@ -19,6 +19,7 @@ final class ApiContractTests: XCTestCase {
     private static let methods = [
         "hello", "status", "list_jobs", "get_job", "set_job", "remove_job", "set_job_enabled", "run_job",
         "cancel_run", "list_runs", "get_run_log", "preview_schedule", "get_config", "set_config",
+        "list_secrets", "set_secret", "remove_secret",
     ]
 
     /// `set_job_shell` → `set_job`, `run_job_second` → `run_job`,
@@ -56,7 +57,9 @@ final class ApiContractTests: XCTestCase {
         case "get_run_log": try check(GetRunLogParams.self, json, file, exact: true)
         case "preview_schedule": try check(PreviewScheduleParams.self, json, file, exact: true)
         case "set_config": try check(SetConfigParams.self, json, file, exact: true)
-        case "status", "list_jobs", "get_config": try check(Empty.self, json, file, exact: true)
+        case "status", "list_jobs", "get_config", "list_secrets": try check(Empty.self, json, file, exact: true)
+        case "set_secret": try check(SetSecretParams.self, json, file, exact: true)
+        case "remove_secret": try check(NameParams.self, json, file, exact: true)
         default: XCTFail("\(file): no params type for \(method)")
         }
     }
@@ -75,6 +78,9 @@ final class ApiContractTests: XCTestCase {
         case "get_run_log": try check(GetRunLogResult.self, json, file, exact: true)
         case "preview_schedule": try check(PreviewScheduleResult.self, json, file, exact: true)
         case "get_config", "set_config": try check(Config.self, json, file, exact: true)
+        case "list_secrets": try check(ListSecretsResult.self, json, file, exact: true)
+        case "set_secret": try check(SetSecretResult.self, json, file, exact: true)
+        case "remove_secret": try check(RemoveSecretResult.self, json, file, exact: true)
         default: XCTFail("\(file): no result type for \(method)")
         }
     }
@@ -129,5 +135,11 @@ final class ApiContractTests: XCTestCase {
         let text = String(decoding: try Api.encoder.encode(job), as: UTF8.self)
         XCTAssertTrue(text.contains("\"REVIEW_LIMIT\""), text)
         XCTAssertFalse(text.contains("\"args\""), text)
+    }
+
+    func testPrintingSetSecretParamsHidesTheValue() {
+        let p = SetSecretParams(name: "github-token", value: "ghp_secret", description: "x")
+        XCTAssertFalse("\(p)".contains("ghp_secret"))
+        XCTAssertTrue("\(p)".contains("<hidden>"))
     }
 }

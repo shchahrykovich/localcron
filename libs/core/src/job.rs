@@ -12,6 +12,7 @@ use chrono::{DateTime, FixedOffset};
 use serde::{Deserialize, Serialize};
 
 use crate::schedule::Schedule;
+use crate::secret;
 
 /// One hour. An agent that is still busy after that is likely stuck.
 pub const DEFAULT_TIMEOUT_SECS: u64 = 3600;
@@ -70,6 +71,10 @@ pub struct Job {
     pub dir: String,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
+    /// Variable name to secret name: `{"GH_TOKEN": "github-token"}`. The
+    /// daemon reads the value from the Keychain when the run starts.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub secret_env: BTreeMap<String, String>,
     #[serde(default = "default_timeout")]
     pub timeout_secs: u64,
     #[serde(default = "yes")]
@@ -126,13 +131,19 @@ impl Job {
         if !Path::new(&self.dir).is_absolute() {
             return Err(format!("dir must be an absolute path, not {:?}", self.dir));
         }
-        for key in self.env.keys() {
+        for key in self.env.keys().chain(self.secret_env.keys()) {
             let ok = !key.is_empty()
                 && !key.starts_with(|c: char| c.is_ascii_digit())
                 && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
             if !ok {
                 return Err(format!("env name {key:?}: use letters, digits and _"));
             }
+        }
+        for (key, name) in &self.secret_env {
+            if self.env.contains_key(key) {
+                return Err(format!("{key} is in env and in secret_env; keep it in one"));
+            }
+            secret::check_name(name)?;
         }
         if self.timeout_secs == 0 || self.timeout_secs > MAX_TIMEOUT_SECS {
             return Err(format!("timeout_secs must be 1 to {MAX_TIMEOUT_SECS} (7 days)"));
@@ -218,6 +229,7 @@ mod tests {
             args: vec!["--max-turns".into(), "20".into()],
             dir: "/Users/me/shop".into(),
             env: BTreeMap::new(),
+            secret_env: BTreeMap::new(),
             timeout_secs: 600,
             enabled: true,
             catch_up: true,
@@ -271,6 +283,19 @@ mod tests {
         })
         .contains("env name"));
         assert!(bad(|j| {
+            j.secret_env.insert("GH-TOKEN".into(), "github-token".into());
+        })
+        .contains("env name"));
+        assert!(bad(|j| {
+            j.secret_env.insert("GH_TOKEN".into(), "github token".into());
+        })
+        .contains("secret name"));
+        assert!(bad(|j| {
+            j.env.insert("GH_TOKEN".into(), "x".into());
+            j.secret_env.insert("GH_TOKEN".into(), "github-token".into());
+        })
+        .contains("in env and in secret_env"));
+        assert!(bad(|j| {
             j.kind = JobKind::Codex;
         })
         .contains("permission_mode is for claude"));
@@ -288,5 +313,14 @@ mod tests {
         assert_eq!(job.timeout_secs, DEFAULT_TIMEOUT_SECS);
         let text = serde_json::to_string(&job).unwrap();
         assert!(!text.contains("prompt") && !text.contains("env"), "{text}");
+    }
+
+    #[test]
+    fn secret_env_holds_names_only() {
+        let mut job = claude_job();
+        job.secret_env.insert("GH_TOKEN".into(), "github-token".into());
+        assert!(job.validate().is_ok());
+        let text = serde_json::to_string(&job).unwrap();
+        assert!(text.contains(r#""secret_env":{"GH_TOKEN":"github-token"}"#), "{text}");
     }
 }

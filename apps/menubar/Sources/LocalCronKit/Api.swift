@@ -7,7 +7,7 @@
 
 import Foundation
 
-public let apiVersion = "1.1"
+public let apiVersion = "1.2"
 
 public func apiMajor(_ version: String) -> Int? {
     version.split(separator: ".").first.flatMap { Int($0) }
@@ -121,6 +121,9 @@ public struct Job: Codable, Equatable, Sendable, Identifiable {
     public var args: [String]
     public var dir: String
     public var env: [String: String]
+    /// Variable name to secret name. The daemon reads the value from the
+    /// Keychain when the run starts.
+    public var secretEnv: [String: String]
     public var timeoutSecs: UInt64
     public var enabled: Bool
     public var catchUp: Bool
@@ -130,8 +133,8 @@ public struct Job: Codable, Equatable, Sendable, Identifiable {
 
     public init(id: String, schedule: String, kind: JobKind, command: String? = nil, prompt: String? = nil,
                 model: String? = nil, permissionMode: String? = nil, args: [String] = [], dir: String,
-                env: [String: String] = [:], timeoutSecs: UInt64 = Job.defaultTimeout, enabled: Bool = true,
-                catchUp: Bool = true, note: String = "", updatedAt: String? = nil) {
+                env: [String: String] = [:], secretEnv: [String: String] = [:], timeoutSecs: UInt64 = Job.defaultTimeout,
+                enabled: Bool = true, catchUp: Bool = true, note: String = "", updatedAt: String? = nil) {
         self.id = id
         self.schedule = schedule
         self.kind = kind
@@ -142,6 +145,7 @@ public struct Job: Codable, Equatable, Sendable, Identifiable {
         self.args = args
         self.dir = dir
         self.env = env
+        self.secretEnv = secretEnv
         self.timeoutSecs = timeoutSecs
         self.enabled = enabled
         self.catchUp = catchUp
@@ -152,6 +156,7 @@ public struct Job: Codable, Equatable, Sendable, Identifiable {
     enum CodingKeys: String, CodingKey {
         case id, schedule, kind, command, prompt, model, args, dir, env, enabled, note
         case permissionMode = "permission_mode"
+        case secretEnv = "secret_env"
         case timeoutSecs = "timeout_secs"
         case catchUp = "catch_up"
         case updatedAt = "updated_at"
@@ -169,6 +174,7 @@ public struct Job: Codable, Equatable, Sendable, Identifiable {
         args = try c.decodeIfPresent([String].self, forKey: .args) ?? []
         dir = try c.decode(String.self, forKey: .dir)
         env = try c.decodeIfPresent([String: String].self, forKey: .env) ?? [:]
+        secretEnv = try c.decodeIfPresent([String: String].self, forKey: .secretEnv) ?? [:]
         timeoutSecs = try c.decodeIfPresent(UInt64.self, forKey: .timeoutSecs) ?? Self.defaultTimeout
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
         catchUp = try c.decodeIfPresent(Bool.self, forKey: .catchUp) ?? true
@@ -189,6 +195,7 @@ public struct Job: Codable, Equatable, Sendable, Identifiable {
         if !args.isEmpty { try c.encode(args, forKey: .args) }
         try c.encode(dir, forKey: .dir)
         if !env.isEmpty { try c.encode(env, forKey: .env) }
+        if !secretEnv.isEmpty { try c.encode(secretEnv, forKey: .secretEnv) }
         try c.encode(timeoutSecs, forKey: .timeoutSecs)
         try c.encode(enabled, forKey: .enabled)
         try c.encode(catchUp, forKey: .catchUp)
@@ -495,6 +502,41 @@ public struct SetJobParams: Codable, Equatable, Sendable {
 public struct SetJobResult: Codable, Equatable, Sendable {
     public var job: JobView
     public var created: Bool
+    /// Secrets in `secret_env` that are not set yet: runs fail until the
+    /// user sets them.
+    public var missingSecrets: [MissingSecret]
+
+    enum CodingKeys: String, CodingKey {
+        case job, created
+        case missingSecrets = "missing_secrets"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        job = try c.decode(JobView.self, forKey: .job)
+        created = try c.decode(Bool.self, forKey: .created)
+        missingSecrets = try c.decodeIfPresent([MissingSecret].self, forKey: .missingSecrets) ?? []
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(job, forKey: .job)
+        try c.encode(created, forKey: .created)
+        if !missingSecrets.isEmpty { try c.encode(missingSecrets, forKey: .missingSecrets) }
+    }
+}
+
+public struct MissingSecret: Codable, Equatable, Sendable {
+    public var name: String
+    /// The variable in `secret_env` that wants it.
+    public var env: String
+    /// For the user to run in a terminal: `localcron secret set github-token`.
+    public var setCommand: String
+
+    enum CodingKeys: String, CodingKey {
+        case name, env
+        case setCommand = "set_command"
+    }
 }
 
 public struct JobResult: Codable, Equatable, Sendable {
@@ -609,4 +651,123 @@ public struct PreviewScheduleParams: Codable, Equatable, Sendable {
 public struct PreviewScheduleResult: Codable, Equatable, Sendable {
     public var description: String
     public var next: [String]
+}
+
+// MARK: - Secrets
+
+public enum SecretState: String, Codable, Sendable {
+    /// The daemon can read the value.
+    case ok
+    /// No value in the Keychain.
+    case missing
+    /// The Keychain needs a dialog to give the value.
+    case unreadable
+}
+
+/// A secret without its value. No reply has the value.
+public struct SecretInfo: Codable, Equatable, Sendable, Identifiable {
+    public var name: String
+    /// How to get a new value: where, which scopes, the expiry.
+    public var description: String
+    public var updatedAt: String
+    public var state: SecretState
+    /// Why the state is not ok.
+    public var message: String
+    /// The jobs that name it in `secret_env`.
+    public var usedBy: [String]
+    /// For the user to run in a terminal to set a new value.
+    public var setCommand: String
+
+    public var id: String { name }
+
+    enum CodingKeys: String, CodingKey {
+        case name, description, state, message
+        case updatedAt = "updated_at"
+        case usedBy = "used_by"
+        case setCommand = "set_command"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decode(String.self, forKey: .name)
+        description = try c.decodeIfPresent(String.self, forKey: .description) ?? ""
+        updatedAt = try c.decode(String.self, forKey: .updatedAt)
+        state = try c.decode(SecretState.self, forKey: .state)
+        message = try c.decodeIfPresent(String.self, forKey: .message) ?? ""
+        usedBy = try c.decodeIfPresent([String].self, forKey: .usedBy) ?? []
+        setCommand = try c.decode(String.self, forKey: .setCommand)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(name, forKey: .name)
+        if !description.isEmpty { try c.encode(description, forKey: .description) }
+        try c.encode(updatedAt, forKey: .updatedAt)
+        try c.encode(state, forKey: .state)
+        if !message.isEmpty { try c.encode(message, forKey: .message) }
+        if !usedBy.isEmpty { try c.encode(usedBy, forKey: .usedBy) }
+        try c.encode(setCommand, forKey: .setCommand)
+    }
+}
+
+public struct ListSecretsResult: Codable, Equatable, Sendable {
+    public var secrets: [SecretInfo]
+}
+
+/// Without `value` only the description changes. The value goes to the
+/// daemon, which stores it in the Keychain; it is never in a reply.
+public struct SetSecretParams: Codable, Equatable, Sendable, CustomDebugStringConvertible {
+    public var name: String
+    public var value: String?
+    public var description: String?
+
+    public init(name: String, value: String? = nil, description: String? = nil) {
+        self.name = name
+        self.value = value
+        self.description = description
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case name, value, description
+    }
+
+    // Used by print and string interpolation too (the type has no
+    // CustomStringConvertible: `description` is a field). Never the value.
+    public var debugDescription: String { "SetSecretParams(name: \(name), value: \(value == nil ? "nil" : "<hidden>"))" }
+}
+
+public struct SetSecretResult: Codable, Equatable, Sendable {
+    public var secret: SecretInfo
+    public var created: Bool
+}
+
+public struct NameParams: Codable, Equatable, Sendable {
+    public var name: String
+
+    public init(name: String) {
+        self.name = name
+    }
+}
+
+public struct RemoveSecretResult: Codable, Equatable, Sendable {
+    public var removed: Bool
+    /// Jobs that still name it.
+    public var usedBy: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case removed
+        case usedBy = "used_by"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        removed = try c.decode(Bool.self, forKey: .removed)
+        usedBy = try c.decodeIfPresent([String].self, forKey: .usedBy) ?? []
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(removed, forKey: .removed)
+        if !usedBy.isEmpty { try c.encode(usedBy, forKey: .usedBy) }
+    }
 }

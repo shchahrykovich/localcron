@@ -14,13 +14,13 @@ use crate::job::Job;
 use crate::run::Run;
 
 /// Major.minor. A client stops when the major number differs.
-pub const API_VERSION: &str = "1.1";
+pub const API_VERSION: &str = "1.2";
 
 pub fn api_major(version: &str) -> Option<u32> {
     version.split('.').next()?.parse().ok()
 }
 
-pub const METHODS: [&str; 14] = [
+pub const METHODS: [&str; 17] = [
     "hello",
     "status",
     "list_jobs",
@@ -35,6 +35,9 @@ pub const METHODS: [&str; 14] = [
     "preview_schedule",
     "get_config",
     "set_config",
+    "list_secrets",
+    "set_secret",
+    "remove_secret",
 ];
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -160,6 +163,19 @@ pub struct SetJobParams {
 pub struct SetJobResult {
     pub job: JobView,
     pub created: bool,
+    /// Secrets in `secret_env` that are not set yet. The job is saved; its
+    /// runs fail until the user sets them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub missing_secrets: Vec<MissingSecret>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MissingSecret {
+    pub name: String,
+    /// The variable in `secret_env` that wants it.
+    pub env: String,
+    /// For the user to run in a terminal: `localcron secret set github-token`.
+    pub set_command: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -304,4 +320,95 @@ pub struct SetConfigParams {
     /// Pause (true) or resume (false) every schedule.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paused: Option<bool>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SecretState {
+    /// The daemon can read the value.
+    Ok,
+    /// No value in the Keychain: it was removed there, or never set.
+    Missing,
+    /// The Keychain has a value the daemon cannot read without a dialog: it
+    /// is locked, or another build of the daemon stored the value.
+    Unreadable,
+}
+
+/// A secret without its value. No reply has the value.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SecretInfo {
+    pub name: String,
+    /// How to get a new value: where the token was made, its scopes, when it
+    /// expires.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
+    pub updated_at: DateTime<FixedOffset>,
+    pub state: SecretState,
+    /// Why the state is not ok.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub message: String,
+    /// The jobs that name it in `secret_env`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub used_by: Vec<String>,
+    /// For the user to run in a terminal to set a new value.
+    pub set_command: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ListSecretsResult {
+    pub secrets: Vec<SecretInfo>,
+}
+
+/// Without `value` only the description changes, and the secret must exist.
+/// Without `description` a new secret has none and an existing one keeps its
+/// own.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct SetSecretParams {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+// Never print the value, also not by accident in a log line.
+impl std::fmt::Debug for SetSecretParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SetSecretParams")
+            .field("name", &self.name)
+            .field("value", &self.value.as_ref().map(|_| "<hidden>"))
+            .field("description", &self.description)
+            .finish()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SetSecretResult {
+    pub secret: SecretInfo,
+    pub created: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NameParams {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RemoveSecretResult {
+    pub removed: bool,
+    /// Jobs that still name it; their runs fail until it is set again.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub used_by: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn debug_hides_the_value() {
+        let p = SetSecretParams { name: "a".into(), value: Some("ghp_secret".into()), description: None };
+        let text = format!("{p:?}");
+        assert!(!text.contains("ghp_secret") && text.contains("<hidden>"), "{text}");
+    }
 }

@@ -23,7 +23,7 @@ use chrono::{DateTime, FixedOffset, Local, Timelike};
 use localcron_core::api::{
     self, AllowJobSecretsParams, ApiError, CancelRunResult, Config, ErrorCode, GetRunLogParams, GetRunLogResult, JobView, ListJobsResult, ListRunsParams,
     ListRunsResult, ListSecretsResult, MissingSecret, NextRun, PreviewScheduleParams, PreviewScheduleResult, RemoveJobResult,
-    RemoveSecretResult, SecretInfo, SecretState, SetConfigParams, SetJobParams, SetJobResult, SetSecretParams, SetSecretResult,
+    RemoveSecretResult, RunJobParams, SecretInfo, SecretState, SetConfigParams, SetJobParams, SetJobResult, SetSecretParams, SetSecretResult,
     StatusResult,
 };
 use localcron_core::instance::Instance;
@@ -312,6 +312,10 @@ impl Engine {
             run.status = RunStatus::Skipped;
             run.ended_at = Some(run.queued_at);
             run.message = format!("run {} was still {}", busy.id, if busy.status == RunStatus::Queued { "queued" } else { "running" });
+            // An early run that does not start takes no time from the schedule.
+            if trigger == Trigger::Early {
+                run.due_at = None;
+            }
             log!("run {}: skipped, {}", run.id, run.message);
         } else {
             st.queue.push_back(run.id.clone());
@@ -792,6 +796,8 @@ impl Engine {
                 format!("job {:?} exists; give replace: true to change it, or choose another id", job.id),
             ));
         }
+        let same_schedule = st.jobs.get(&job.id).is_some_and(|s| s.job.schedule == job.schedule);
+        let next_due = if same_schedule { next_free(&st.runs, &job.id, &schedule, local_now) } else { next_due };
         let id = job.id.clone();
         let old = st.jobs.insert(id.clone(), Slot { job, schedule, next_due });
         if let Err(e) = self.save_jobs(&st) {
@@ -844,13 +850,14 @@ impl Engine {
 
     pub fn set_job_enabled(&self, id: &str, enabled: bool) -> ApiResult<JobView> {
         let mut st = self.lock();
-        let slot = st.jobs.get_mut(id).ok_or_else(|| not_found_job(id))?;
+        let State { jobs, runs, .. } = &mut *st;
+        let slot = jobs.get_mut(id).ok_or_else(|| not_found_job(id))?;
         let before = (slot.job.enabled, slot.job.updated_at, slot.next_due);
         if slot.job.enabled != enabled {
-            let local_now = Local::now();
+            let next_due = next_free(runs, id, &slot.schedule, Local::now());
             slot.job.enabled = enabled;
             slot.job.updated_at = Some(now());
-            slot.next_due = slot.schedule.next_after(&local_now);
+            slot.next_due = next_due;
             if let Err(e) = self.save_jobs(&st) {
                 let slot = st.jobs.get_mut(id).expect("the job was just read");
                 (slot.job.enabled, slot.job.updated_at, slot.next_due) = before;
@@ -864,12 +871,31 @@ impl Engine {
         Ok(view)
     }
 
-    pub fn run_job(&self, id: &str) -> ApiResult<Run> {
+    /// A run more; with `early`, the next scheduled time runs now and does
+    /// not run again at its time.
+    pub fn run_job(&self, params: RunJobParams) -> ApiResult<Run> {
+        let id = params.id.as_str();
         let mut st = self.lock();
-        if !st.jobs.contains_key(id) {
-            return Err(not_found_job(id));
+        let slot = st.jobs.get(id).ok_or_else(|| not_found_job(id))?;
+        if !params.early {
+            let run = self.enqueue(&mut st, id, Trigger::Manual, None);
+            drop(st);
+            self.notify();
+            return Ok(run);
         }
-        let run = self.enqueue(&mut st, id, Trigger::Manual, None);
+        let Some(due) = slot.job.enabled.then_some(slot.next_due).flatten() else {
+            return Err(invalid(format!("job {id:?} has no next run to run early: it is off, or its one time has passed")));
+        };
+        let run = self.enqueue(&mut st, id, Trigger::Early, Some(due.fixed_offset()));
+        if run.status == RunStatus::Queued {
+            let slot = st.jobs.get_mut(id).expect("the job was just read");
+            slot.next_due = slot.schedule.next_after(&due);
+            if slot.schedule.is_once() {
+                slot.job.enabled = false;
+                let _ = self.save_jobs(&st);
+            }
+            log!("job {id}: {due} runs early; next {:?}", st.jobs[id].next_due);
+        }
         drop(st);
         self.notify();
         Ok(run)
@@ -1000,7 +1026,7 @@ impl Engine {
                 let queued: Vec<String> = st
                     .runs
                     .iter()
-                    .filter(|r| r.status == RunStatus::Queued && r.trigger != Trigger::Manual)
+                    .filter(|r| r.status == RunStatus::Queued && !matches!(r.trigger, Trigger::Manual | Trigger::Early))
                     .map(|r| r.id.clone())
                     .collect();
                 for run_id in &queued {
@@ -1012,8 +1038,9 @@ impl Engine {
             (true, false) => {
                 // Times that passed while paused are not caught up.
                 let local_now = Local::now();
-                for slot in st.jobs.values_mut() {
-                    slot.next_due = slot.schedule.next_after(&local_now);
+                let State { jobs, runs, .. } = &mut *st;
+                for slot in jobs.values_mut() {
+                    slot.next_due = next_free(runs, &slot.job.id, &slot.schedule, local_now);
                 }
                 log!("resumed");
             }
@@ -1168,11 +1195,22 @@ impl Engine {
 /// up. Without catch_up, the first time from now.
 fn first_due(job: &Job, schedule: &Schedule, last_due: Option<DateTime<FixedOffset>>, now: DateTime<Local>) -> Option<DateTime<Local>> {
     let base = [last_due, job.updated_at].into_iter().flatten().max().map(|t| t.with_timezone(&Local)).unwrap_or(now);
-    let next = schedule.next_after(&base.min(now));
-    match next {
+    let next = match schedule.next_after(&base.min(now)) {
         Some(t) if t <= now && !job.catch_up => schedule.next_after(&now),
         other => other,
+    };
+    // An early run took a time that may still be ahead.
+    match last_due.map(|d| d.with_timezone(&Local)) {
+        Some(taken) if next.is_some_and(|t| t <= taken) => schedule.next_after(&taken),
+        _ => next,
     }
+}
+
+/// The next time after `now` that no early run took already.
+fn next_free(runs: &[Run], job_id: &str, schedule: &Schedule, now: DateTime<Local>) -> Option<DateTime<Local>> {
+    let taken = runs.iter().filter(|r| r.job_id == job_id && r.trigger == Trigger::Early).filter_map(|r| r.due_at).max();
+    let after = taken.map(|t| t.with_timezone(&Local)).filter(|t| *t > now).unwrap_or(now);
+    schedule.next_after(&after)
 }
 
 /// A SIGTERM time so old that the scheduler sends SIGKILL at its next look.
@@ -1295,6 +1333,15 @@ mod tests {
         let last = Some(local("2026-10-28 09:00").fixed_offset());
         let due = first_due(&j, &s, last, local("2026-10-29 12:00")).unwrap();
         assert_eq!(due, local("2026-11-04 09:00"));
+    }
+
+    #[test]
+    fn a_time_an_early_run_took_is_not_run_after_a_restart() {
+        let (j, s) = job("0 12 * * fri", true, &local("2026-10-01 10:00").fixed_offset().to_rfc3339());
+        // Friday 12:00 ran early at 10:00; the daemon starts again at 11:00.
+        let last = Some(local("2026-10-30 12:00").fixed_offset());
+        let due = first_due(&j, &s, last, local("2026-10-30 11:00")).unwrap();
+        assert_eq!(due, local("2026-11-06 12:00"));
     }
 
     #[test]

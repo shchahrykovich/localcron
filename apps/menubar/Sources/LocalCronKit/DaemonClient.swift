@@ -187,7 +187,9 @@ public final class DaemonClient: Sendable {
     public func setEnabled(id: String, enabled: Bool) async throws -> JobView {
         try await call("set_job_enabled", SetJobEnabledParams(id: id, enabled: enabled), as: JobResult.self).job
     }
-    public func runJob(id: String) async throws -> Run { try await call("run_job", IdParams(id: id), as: RunResult.self).run }
+    public func runJob(id: String, early: Bool = false) async throws -> Run {
+        try await call("run_job", RunJobParams(id: id, early: early), as: RunResult.self).run
+    }
     public func cancelRun(id: String, force: Bool = false) async throws -> CancelRunResult {
         try await call("cancel_run", CancelRunParams(runId: id, force: force))
     }

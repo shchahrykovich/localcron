@@ -14,7 +14,7 @@ use crate::job::Job;
 use crate::run::Run;
 
 /// Major.minor. A client stops when the major number differs.
-pub const API_VERSION: &str = "1.2";
+pub const API_VERSION: &str = "1.3";
 
 pub fn api_major(version: &str) -> Option<u32> {
     version.split('.').next()?.parse().ok()
@@ -199,6 +199,15 @@ pub struct RemoveJobResult {
 pub struct SetJobEnabledParams {
     pub id: String,
     pub enabled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RunJobParams {
+    pub id: String,
+    /// Run the next scheduled time now, instead of a run more: that time
+    /// does not run again. An error when the job has no next run.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub early: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

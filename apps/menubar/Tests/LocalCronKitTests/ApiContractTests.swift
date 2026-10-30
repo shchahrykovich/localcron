@@ -49,7 +49,8 @@ final class ApiContractTests: XCTestCase {
     private func params(_ method: String, _ json: Any, _ file: String) throws {
         switch method {
         case "hello": try check(HelloParams.self, json, file, exact: true)
-        case "get_job", "remove_job", "run_job": try check(IdParams.self, json, file, exact: true)
+        case "get_job", "remove_job": try check(IdParams.self, json, file, exact: true)
+        case "run_job": try check(RunJobParams.self, json, file, exact: true)
         case "set_job": try check(SetJobParams.self, json, file, exact: false)
         case "set_job_enabled": try check(SetJobEnabledParams.self, json, file, exact: true)
         case "cancel_run": try check(CancelRunParams.self, json, file, exact: true)

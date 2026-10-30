@@ -13,6 +13,9 @@ pub enum Trigger {
     CatchUp,
     /// Someone asked: the app, the CLI or an agent.
     Manual,
+    /// Someone asked to run the next scheduled time now (`run_job` with
+    /// `early`). `due_at` is that time; the schedule goes on after it.
+    Early,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,6 +50,7 @@ pub struct Run {
     pub trigger: Trigger,
     pub status: RunStatus,
     /// The scheduled time this run is for; none for a manual run.
+    /// For an early run, a time that has not come yet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub due_at: Option<DateTime<FixedOffset>>,
     pub queued_at: DateTime<FixedOffset>,

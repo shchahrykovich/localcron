@@ -90,6 +90,11 @@ async fn an_agent_schedules_a_job_in_its_project_and_runs_it() {
     let log = json_of(&call(&client, "get_run_log", json!({"run_id": run})).await);
     assert!(log["text"].as_str().unwrap().contains("/shop\n"), "{log}");
 
+    let next = json_of(&call(&client, "get_job", json!({"id": "deps"})).await)["job"]["next_run"].clone();
+    let early = json_of(&call(&client, "run_job", json!({"id": "deps", "early": true})).await)["run"].clone();
+    assert_eq!(early["trigger"], "early", "{early}");
+    assert_eq!(early["due_at"], next, "{early}");
+
     let r = call(&client, "enable_job", json!({"id": "deps", "enabled": false})).await;
     assert_eq!(json_of(&r)["job"]["enabled"], false);
     let r = call(&client, "remove_job", json!({"id": "deps"})).await;

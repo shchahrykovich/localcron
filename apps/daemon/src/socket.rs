@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use localcron_core::api::{
     self, AllowJobSecretsParams, ApiError, CancelRunParams, ErrorCode, GetRunLogParams, HelloParams, HelloResult, IdParams, JobResult, ListRunsParams,
-    NameParams, PreviewScheduleParams, Request, Response, RunResult, SetConfigParams, SetJobEnabledParams, SetJobParams,
+    NameParams, PreviewScheduleParams, Request, Response, RunJobParams, RunResult, SetConfigParams, SetJobEnabledParams, SetJobParams,
     SetSecretParams,
 };
 use serde::Serialize;
@@ -107,7 +107,7 @@ pub fn dispatch(engine: &Engine, request: Request, trust: &Trust) -> Result<Valu
             let p: SetJobEnabledParams = params(p)?;
             to_value(JobResult { job: engine.set_job_enabled(&p.id, p.enabled)? })
         }
-        "run_job" => to_value(RunResult { run: engine.run_job(&params::<IdParams>(p)?.id)? }),
+        "run_job" => to_value(RunResult { run: engine.run_job(params::<RunJobParams>(p)?)? }),
         "cancel_run" => {
             let p: CancelRunParams = params(p)?;
             to_value(engine.cancel_run(&p.run_id, p.force)?)

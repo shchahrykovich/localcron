@@ -112,13 +112,20 @@ struct JobRow: View {
                     }
                 }
             } else {
-                Button {
-                    Task { await model.runNow(job) }
+                Menu {
+                    Button("Run Now, as an Extra Run") { Task { await model.runNow(job) } }
+                    if let next = nextScheduled {
+                        Button("Run Now, Instead of the Run \(next)") { Task { await model.runNow(job, early: true) } }
+                    }
                 } label: {
                     Image(systemName: "play.fill")
+                } primaryAction: {
+                    Task { await model.runNow(job) }
                 }
+                .menuStyle(.borderedButton)
+                .fixedSize()
                 .controlSize(.small)
-                .help("Run now")
+                .help("Run now as an extra run. The arrow also offers to run the next scheduled run now.")
             }
         }
         .padding(.vertical, 4)
@@ -127,6 +134,9 @@ struct JobRow: View {
         .contextMenu {
             Button("Edit…") { model.edit(job) }
             Button("Run Now") { Task { await model.runNow(job) } }
+            if let next = nextScheduled {
+                Button("Run Now, Instead of the Run \(next)") { Task { await model.runNow(job, early: true) } }
+            }
             if job.secretsAllowed == false {
                 Button("Allow Secrets…") { Task { await model.allowSecrets(job) } }
             }
@@ -154,6 +164,11 @@ struct JobRow: View {
     }
 
     /// The prompt or the command, on one line.
+    /// The next scheduled run, as "today 12:00", while the job has one.
+    private var nextScheduled: String? {
+        job.nextRun.flatMap(ApiDate.parse).map { Formatting.next($0) }
+    }
+
     private var summary: String {
         let text = job.job.kind == .shell ? job.job.command ?? "" : job.job.prompt ?? ""
         let folder = (job.job.dir as NSString).abbreviatingWithTildeInPath

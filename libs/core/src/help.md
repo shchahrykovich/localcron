@@ -55,7 +55,7 @@ A new job runs in the current folder; `--dir` changes it.
 | `{{CLI}} add … --replace` | Change a job |
 | `{{CLI}} remove ID` | Remove a job, its runs and logs |
 | `{{CLI}} enable ID`, `{{CLI}} disable ID` | Turn a job on or off |
-| `{{CLI}} run ID [--wait]` | Run now; `--wait` prints the output and exits with the run's code |
+| `{{CLI}} run ID [--wait] [--early]` | Run now; `--wait` prints the output and exits with the run's code; `--early` runs the next scheduled time now, so it does not run again at that time |
 | `{{CLI}} attach RUN` | Open the console of a running claude job, to watch it and type into it (needs tmux) |
 | `{{CLI}} cancel RUN [--kill]` | Stop a run: SIGTERM, then SIGKILL after 10 s; `--kill` at once |
 | `{{CLI}} pause`, `{{CLI}} resume` | Stop or start every schedule |

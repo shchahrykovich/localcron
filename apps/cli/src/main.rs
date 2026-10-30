@@ -14,7 +14,7 @@ use anyhow::{Context, bail};
 use chrono::{DateTime, FixedOffset, Local};
 use clap::{Args, Parser, Subcommand};
 use localcron_core::api::{
-    CancelRunParams, Config, Empty, GetRunLogParams, GetRunLogResult, IdParams, JobResult, JobView, ListJobsResult, ListRunsParams,
+    CancelRunParams, Config, Empty, GetRunLogParams, GetRunLogResult, IdParams, JobResult, JobView, ListJobsResult, ListRunsParams, RunJobParams,
     ListRunsResult, ListSecretsResult, NameParams, PreviewScheduleParams, PreviewScheduleResult, RemoveSecretResult, RunResult,
     SecretInfo, SecretState, SetConfigParams, SetJobEnabledParams, SetJobParams, SetJobResult, SetSecretParams, SetSecretResult,
     StatusResult,
@@ -22,7 +22,7 @@ use localcron_core::api::{
 use localcron_core::instance::Instance;
 use localcron_core::job::{DEFAULT_TIMEOUT_SECS, Job, JobKind};
 use localcron_core::paths::Paths;
-use localcron_core::run::{Run, RunStatus};
+use localcron_core::run::{Run, RunStatus, Trigger};
 use serde_json::Value;
 
 #[derive(Parser)]
@@ -59,6 +59,9 @@ enum Command {
         /// Wait for the end, print the output, and exit with the run's exit code.
         #[arg(long)]
         wait: bool,
+        /// Run the next scheduled time now: it does not run again at its time.
+        #[arg(long)]
+        early: bool,
     },
     /// Open the interactive console of a running claude job (needs tmux),
     /// to watch it and type into it. Leave it with Ctrl-B then D: the run
@@ -307,14 +310,16 @@ fn run(cli: Cli, instance: &Instance, paths: &Paths) -> anyhow::Result<ExitCode>
         }
         Command::Enable { id } => set_enabled(&call, &id, true, json)?,
         Command::Disable { id } => set_enabled(&call, &id, false, json)?,
-        Command::Run { id, wait } => {
-            let v = call("run_job", serde_json::to_value(IdParams { id })?)?;
+        Command::Run { id, wait, early } => {
+            let v = call("run_job", serde_json::to_value(RunJobParams { id, early })?)?;
             let run = serde_json::from_value::<RunResult>(v.clone())?.run;
             if !wait {
                 if json {
                     show(&v)?;
                 } else {
-                    println!("{} {}{}", run.id, status_word(run.status), message_part(&run));
+                    let early = run.due_at.as_ref().filter(|_| run.trigger == Trigger::Early);
+                    let instead = early.map_or(String::new(), |t| format!(", instead of the run at {}", when(t)));
+                    println!("{} {}{}{instead}", run.id, status_word(run.status), message_part(&run));
                 }
                 return Ok(ExitCode::SUCCESS);
             }

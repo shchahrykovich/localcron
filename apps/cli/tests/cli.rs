@@ -32,6 +32,8 @@ fn add_list_run_and_read_the_log() {
     assert!(ok && out.contains("Changed greet"), "{out}");
     let (ok, _, _, code) = d.cli(&["run", "greet", "--wait"]);
     assert!(ok && code == Some(0));
+    let (ok, out, _, _) = d.cli(&["run", "greet", "--early"]);
+    assert!(ok && out.contains("instead of the run at"), "{out}");
 
     let (_, out, _, _) = d.cli(&["disable", "greet"]);
     assert!(out.contains("(off"), "{out}");

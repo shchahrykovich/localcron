@@ -7,7 +7,7 @@
 
 import Foundation
 
-public let apiVersion = "1.2"
+public let apiVersion = "1.3"
 
 public func apiMajor(_ version: String) -> Int? {
     version.split(separator: ".").first.flatMap { Int($0) }
@@ -257,12 +257,15 @@ public enum Trigger: String, Codable, Sendable {
     case schedule
     case catchUp = "catch_up"
     case manual
+    /// The next scheduled time, run now; `dueAt` is that time.
+    case early
 
     public var title: String {
         switch self {
         case .schedule: "Schedule"
         case .catchUp: "Catch-up"
         case .manual: "Manual"
+        case .early: "Early"
         }
     }
 }
@@ -567,6 +570,33 @@ public struct SetJobEnabledParams: Codable, Equatable, Sendable {
     public init(id: String, enabled: Bool) {
         self.id = id
         self.enabled = enabled
+    }
+}
+
+public struct RunJobParams: Codable, Equatable, Sendable {
+    public var id: String
+    /// Run the next scheduled time now: it does not run again at its time.
+    public var early: Bool
+
+    public init(id: String, early: Bool = false) {
+        self.id = id
+        self.early = early
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, early
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        early = try c.decodeIfPresent(Bool.self, forKey: .early) ?? false
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        if early { try c.encode(early, forKey: .early) }
     }
 }
 

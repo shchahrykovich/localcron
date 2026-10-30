@@ -43,7 +43,8 @@ fn every_example_decodes_and_every_method_has_one() {
             match method {
                 "hello" => check::<HelloParams>(p, &file),
                 "status" | "list_jobs" | "get_config" => check::<Empty>(p, &file),
-                "get_job" | "remove_job" | "run_job" => check::<IdParams>(p, &file),
+                "get_job" | "remove_job" => check::<IdParams>(p, &file),
+                "run_job" => check::<RunJobParams>(p, &file),
                 "set_job" => check::<SetJobParams>(p, &file),
                 "set_job_enabled" => check::<SetJobEnabledParams>(p, &file),
                 "cancel_run" => check::<CancelRunParams>(p, &file),

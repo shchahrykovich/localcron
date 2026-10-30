@@ -411,6 +411,61 @@ fn a_manual_run_of_a_timer_keeps_the_job() {
 }
 
 #[test]
+fn an_early_run_takes_the_place_of_the_next_scheduled_run() {
+    let d = Daemon::start();
+    let next = d.ok("set_job", json!({"job": d.shell_job("weekly", "echo early")}))["job"]["next_run"].clone();
+    let run = d.ok("run_job", json!({"id": "weekly", "early": true}))["run"].clone();
+    assert_eq!(run["trigger"], "early");
+    assert_eq!(run["due_at"], next, "{run}");
+    d.wait_status(run["id"].as_str().unwrap(), "succeeded");
+    let job = d.ok("get_job", json!({"id": "weekly"}))["job"].clone();
+    let after = job["next_run"].as_str().unwrap();
+    assert!(after > next.as_str().unwrap(), "next_run {after} is not after {next}");
+
+    // Nor when the job is turned off and on, or LocalCron is paused and resumed.
+    d.ok("set_job_enabled", json!({"id": "weekly", "enabled": false}));
+    assert_eq!(d.ok("set_job_enabled", json!({"id": "weekly", "enabled": true}))["job"]["next_run"], after);
+    d.ok("set_config", json!({"paused": true}));
+    d.ok("set_config", json!({"paused": false}));
+    assert_eq!(d.ok("get_job", json!({"id": "weekly"}))["job"]["next_run"], after);
+
+    // The time it took does not come back after a restart.
+    let d = Daemon::start_in(d.stop());
+    assert_eq!(d.ok("get_job", json!({"id": "weekly"}))["job"]["next_run"], after);
+}
+
+#[test]
+fn an_early_run_of_a_busy_job_is_skipped_and_keeps_the_next_run() {
+    let d = Daemon::start();
+    let next = d.ok("set_job", json!({"job": d.shell_job("busy", "sleep 30")}))["job"]["next_run"].clone();
+    let first = d.ok("run_job", json!({"id": "busy"}))["run"]["id"].as_str().unwrap().to_string();
+    let early = d.ok("run_job", json!({"id": "busy", "early": true}))["run"].clone();
+    assert_eq!(early["status"], "skipped");
+    assert!(early.get("due_at").is_none(), "{early}");
+    assert_eq!(d.ok("get_job", json!({"id": "busy"}))["job"]["next_run"], next);
+    d.ok("cancel_run", json!({"run_id": first, "force": true}));
+}
+
+#[test]
+fn an_early_run_needs_a_next_run() {
+    let d = Daemon::start();
+    d.ok("set_job", json!({"job": d.shell_job("off", "true")}));
+    d.ok("set_job_enabled", json!({"id": "off", "enabled": false}));
+    let e = d.call("run_job", json!({"id": "off", "early": true})).unwrap_err();
+    assert_eq!(e["code"], "invalid", "{e}");
+    assert_eq!(d.ok("list_runs", json!({"job_id": "off"}))["runs"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn an_early_run_of_a_timer_is_its_one_run() {
+    let d = Daemon::start();
+    d.ok("set_job", json!({"job": timer(&d, "soon", "1h", "true")}));
+    let run = d.ok("run_job", json!({"id": "soon", "early": true}))["run"].clone();
+    d.wait_status(run["id"].as_str().unwrap(), "succeeded");
+    wait_for(|| !job_exists(&d, "soon"), "the timer's job to be removed");
+}
+
+#[test]
 fn runs_of_removed_timers_are_kept_up_to_keep_runs() {
     let d = Daemon::start();
     d.ok("set_config", json!({"keep_runs": 2, "max_concurrent": 3}));

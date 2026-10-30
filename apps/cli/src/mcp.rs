@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use localcron_core::api::{
-    CancelRunParams, Empty, GetRunLogParams, IdParams, ListRunsParams, PreviewScheduleParams, SetConfigParams, SetJobEnabledParams, SetJobParams,
+    CancelRunParams, Empty, GetRunLogParams, IdParams, ListRunsParams, PreviewScheduleParams, RunJobParams, SetConfigParams, SetJobEnabledParams, SetJobParams,
 };
 use localcron_core::instance::Instance;
 use localcron_core::job::{DEFAULT_TIMEOUT_SECS, Job, JobKind};
@@ -108,6 +108,15 @@ impl AddJobArgs {
 pub struct JobIdArgs {
     /// The job id.
     pub id: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RunArgs {
+    /// The job id.
+    pub id: String,
+    /// Run the next scheduled time now, instead of a run more: that time does not run again.
+    pub early: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -237,9 +246,11 @@ removed=false when there is no such job.")]
     }
 
     #[tool(description = "Run a job now, outside its schedule. Returns the run: status queued (it waits for a free \
-slot), or skipped when the job is already running. Check it later with list_runs and get_run_log.")]
-    async fn run_job(&self, Parameters(args): Parameters<JobIdArgs>) -> Result<CallToolResult, ErrorData> {
-        Ok(self.call("run_job", IdParams { id: args.id }).await)
+slot), or skipped when the job is already running. Check it later with list_runs and get_run_log. With early, the \
+run takes the place of the job's next scheduled run, which then does not run at its time (trigger early, due_at \
+that time); an error when the job has no next run.")]
+    async fn run_job(&self, Parameters(args): Parameters<RunArgs>) -> Result<CallToolResult, ErrorData> {
+        Ok(self.call("run_job", RunJobParams { id: args.id, early: args.early.unwrap_or(false) }).await)
     }
 
     #[tool(description = "Stop a queued or running run. Its process and every process it started get SIGTERM, then \
@@ -256,7 +267,7 @@ up. Only when the user asks. Returns the settings with paused.")]
     }
 
     #[tool(description = "Recent runs, newest first: status (queued, running, succeeded, failed, timed_out, \
-canceled, skipped), trigger (schedule, catch_up, manual), times, exit code and the log file.")]
+canceled, skipped), trigger (schedule, catch_up, manual, early), times, exit code and the log file.")]
     async fn list_runs(&self, Parameters(args): Parameters<ListRunsArgs>) -> Result<CallToolResult, ErrorData> {
         Ok(self.call("list_runs", ListRunsParams { job_id: args.job_id, limit: Some(args.limit.unwrap_or(20)) }).await)
     }

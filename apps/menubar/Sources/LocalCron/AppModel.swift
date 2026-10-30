@@ -218,13 +218,15 @@ final class AppModel {
     // MARK: Jobs and runs
 
     /// A job waiting for its secrets asks for the OK first: its first run
-    /// would fail without it.
-    func runNow(_ job: JobView) async {
+    /// would fail without it. With `early`, the run takes the place of the
+    /// next scheduled run.
+    func runNow(_ job: JobView, early: Bool = false) async {
         if job.secretsAllowed == false {
             guard await allowSecrets(job) else { return }
         }
-        if let run = await perform("Could not run \(job.id)", { try await client.runJob(id: job.id) }) {
-            say(run.status == .skipped ? "\(job.id) was not started: \(run.message)" : "\(job.id) started (\(run.id)).",
+        if let run = await perform("Could not run \(job.id)", { try await client.runJob(id: job.id, early: early) }) {
+            let instead = run.dueAt.flatMap(ApiDate.parse).map { " It takes the place of the run \(Formatting.next($0))." } ?? ""
+            say(run.status == .skipped ? "\(job.id) was not started: \(run.message)" : "\(job.id) started (\(run.id)).\(instead)",
                 failed: run.status == .skipped)
         }
     }

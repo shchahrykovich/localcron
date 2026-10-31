@@ -35,6 +35,8 @@ enum Theme {
     /// The window's background. Solid: the popover's own material is almost
     /// clear on macOS 26, and the page behind it showed through.
     static let ground = Color(light: 0xF4F4F2, dark: 0x1C1C1E)
+    /// The sidebar of the Settings window.
+    static let sidebar = Color(light: 0xE9E9E6, dark: 0x232326)
     static let card = Color(nsColor: .controlBackgroundColor)
     static let line = Color(nsColor: .separatorColor)
     static let innerLine = Color(light: 0xEFEFEC, dark: 0x343438)

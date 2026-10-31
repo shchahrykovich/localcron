@@ -19,9 +19,9 @@ enum SettingsPage: String, CaseIterable, Identifiable {
 
     var symbol: String {
         switch self {
-        case .general: "gearshape"
-        case .runs: "play.rectangle"
-        case .agents: "sparkles"
+        case .general: "slider.horizontal.3"
+        case .runs: "clock"
+        case .agents: "sparkle"
         case .daemon: "server.rack"
         case .updates: "arrow.down.circle"
         case .help: "questionmark.circle"
@@ -38,30 +38,20 @@ struct SettingsView: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            VStack(spacing: 0) {
-                List(selection: Binding(get: { page }, set: { if let p = $0 { page = p } })) {
-                    ForEach(SettingsPage.allCases) { p in
-                        HStack {
-                            Label(p.title, systemImage: p.symbol)
-                            if p == .daemon {
-                                Spacer()
-                                Circle().fill(model.running ? Theme.online : Theme.warning).frame(width: 6, height: 6)
-                                    .accessibilityLabel(model.running ? "running" : "not running")
-                            }
-                        }
-                        .badge(p == .updates && updateAvailable ? 1 : 0)
-                        .tag(p)
-                    }
-                }
-                .listStyle(.sidebar)
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(SettingsPage.allCases) { sidebarRow($0) }
+                Spacer()
                 Text("\(Instance.current.appName) \(model.version)")
-                    .font(.caption).foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .padding(.horizontal, 10)
             }
+            .padding(.horizontal, 10)
+            .padding(.top, 12)
+            .padding(.bottom, 14)
             .frame(width: 200)
-            Divider()
+            .frame(maxHeight: .infinity)
+            .background(Theme.sidebar)
+            Rectangle().fill(Theme.line).frame(width: 0.5)
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     Text(page.title).font(.system(size: 20, weight: .semibold))
@@ -87,6 +77,72 @@ struct SettingsView: View {
     private var updateAvailable: Bool {
         if case .available = model.update { return true }
         return false
+    }
+
+    /// A page in the sidebar: grey line icon, the chosen one filled with
+    /// the accent and white text.
+    private func sidebarRow(_ p: SettingsPage) -> some View {
+        let selected = p == page
+        return Button {
+            page = p
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: p.symbol)
+                    .font(.system(size: 13))
+                    .frame(width: 18)
+                    .foregroundStyle(selected ? Color.white : .secondary)
+                Text(p.title).font(.system(size: 13, weight: selected ? .semibold : .regular))
+                    .foregroundStyle(selected ? Color.white : .primary)
+                Spacer()
+                if p == .daemon {
+                    Circle().fill(model.running ? Theme.online : Theme.warning).frame(width: 6, height: 6)
+                        .accessibilityLabel(model.running ? "running" : "not running")
+                }
+                if p == .updates, updateAvailable {
+                    Text("1").font(.system(size: 10, weight: .semibold)).foregroundStyle(selected ? Theme.accentFill : .white)
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(selected ? Color.white : Theme.accentFill, in: Capsule())
+                        .accessibilityLabel("an update is available")
+                }
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 30)
+            .background(selected ? Theme.accentFill : .clear, in: RoundedRectangle(cornerRadius: 7))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
+/// − N +, in one bordered box.
+struct CountStepper: View {
+    let value: Int
+    let range: ClosedRange<Int>
+    let set: (Int) -> Void
+
+    var body: some View {
+        HStack(spacing: 0) {
+            step("minus", value - 1, help: "Fewer")
+            Text("\(value)").font(.system(size: 13).monospacedDigit()).frame(minWidth: 34)
+                .frame(maxHeight: .infinity)
+                .background(Theme.card)
+            step("plus", value + 1, help: "More")
+        }
+        .frame(height: 26)
+        .background(Theme.field, in: RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.neutralLine, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .fixedSize()
+    }
+
+    private func step(_ symbol: String, _ next: Int, help: String) -> some View {
+        Button { set(next) } label: {
+            Image(systemName: symbol).font(.system(size: 11, weight: .semibold)).frame(width: 28, height: 26).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!range.contains(next))
+        .help(help)
     }
 }
 
@@ -203,12 +259,9 @@ private struct RunsPage: View {
                 Card {
                     SettingRow(title: "Runs at the same time",
                                detail: "More runs wait in a queue. A job never runs twice at once: a second run is skipped.") {
-                        Stepper("\(config.maxConcurrent)",
-                                value: Binding(get: { Int(config.maxConcurrent) },
-                                               set: { n in Task { await model.setConfig(maxConcurrent: UInt32(n)) } }),
-                                in: 1...16)
-                            .font(.system(size: 13).monospacedDigit())
-                            .fixedSize()
+                        CountStepper(value: Int(config.maxConcurrent), range: 1...16) { n in
+                            Task { await model.setConfig(maxConcurrent: UInt32(n)) }
+                        }
                     }
                     RowDivider()
                     SettingRow(title: "Space for run logs",
@@ -217,9 +270,9 @@ private struct RunsPage: View {
                                                       set: { mb in Task { await model.setConfig(logBudgetMB: mb) } })) {
                             ForEach(budgetChoices(config.logBudgetMB), id: \.self) { Text(Formatting.bytes(UInt64($0) * 1024 * 1024)).tag($0) }
                         }
-                        .pickerStyle(.segmented)
+                        .pickerStyle(.menu)
                         .labelsHidden()
-                        .fixedSize()
+                        .frame(width: 130)
                     }
                     if model.kittyURL != nil {
                         RowDivider()
@@ -230,10 +283,11 @@ private struct RunsPage: View {
                                 set: { consoleTerminal = $0.rawValue })) {
                                 ForEach(ConsoleTerminal.allCases) { Text($0.title).tag($0) }
                             }
-                            .pickerStyle(.segmented).labelsHidden().fixedSize()
+                            .pickerStyle(.menu).labelsHidden().frame(width: 130)
                         }
                     }
-                    RowDivider()
+                }
+                Card {
                     SettingRow(title: "Pause all jobs",
                                detail: "No scheduled run starts. Run Now still works. A time missed while paused is not caught up.") {
                         Toggle("", isOn: Binding(get: { model.paused }, set: { on in Task { await model.setPaused(on) } }))
@@ -246,22 +300,23 @@ private struct RunsPage: View {
             VStack(alignment: .leading, spacing: 6) {
                 SectionLabel(text: "Run logs") { LinkButton("Show in Finder") { model.openLogsFolder() } }
                 Card(padding: 14) {
-                    VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: 8) {
                         if let logs = model.status?.logs {
-                            Text("\(Formatting.bytes(logs.bytes)) of \(Formatting.bytes(logs.budgetBytes))")
-                                .font(.system(size: 15, weight: .semibold).monospacedDigit())
-                            ProgressView(value: min(1, Double(logs.bytes) / Double(max(1, logs.budgetBytes))))
-                                .tint(Theme.accentFill)
-                            Text(usageText(logs)).font(.system(size: 12)).foregroundStyle(.secondary)
+                            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                                Text("\(Formatting.bytes(logs.bytes)) of \(Formatting.bytes(logs.budgetBytes))")
+                                    .font(.system(size: 14, weight: .semibold).monospacedDigit())
+                                Text(usageText(logs)).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                            }
+                            UsageBar(logs: logs)
                         }
                         if let status = model.status {
                             Text(JobGroups.tilde(status.logsDir + "/runs")).font(Theme.mono).foregroundStyle(.secondary)
                                 .textSelection(.enabled)
                         }
-                        Text("A secret's value never reaches a log: it shows as <secret NAME>.")
-                            .font(.system(size: 11)).foregroundStyle(.secondary)
                     }
                 }
+                Text("A secret's value never reaches a log: it shows as <secret NAME>.")
+                    .font(.system(size: 11)).foregroundStyle(.secondary).padding(.horizontal, 4)
             }
         }
     }
@@ -277,6 +332,30 @@ private struct RunsPage: View {
         var text = logs.files == 1 ? "1 log." : "\(logs.files) logs."
         if let job = logs.largestJob, logs.files > 1 { text += " \(job) uses the most: \(Formatting.bytes(logs.largestJobBytes))." }
         return text
+    }
+}
+
+/// The space of the logs against the budget: the job that uses the most in
+/// the accent, the other jobs lighter.
+private struct UsageBar: View {
+    let logs: LogUsage
+
+    var body: some View {
+        GeometryReader { geo in
+            let total = Double(max(1, logs.budgetBytes))
+            let largest = CGFloat(Double(logs.largestJobBytes) / total) * geo.size.width
+            let rest = CGFloat(Double(logs.bytes - min(logs.bytes, logs.largestJobBytes)) / total) * geo.size.width
+            HStack(spacing: 1) {
+                if largest > 0 { Rectangle().fill(Theme.accentFill).frame(width: max(2, min(largest, geo.size.width))) }
+                if rest > 0 { Rectangle().fill(Theme.accentFill.opacity(0.45)).frame(width: max(2, min(rest, geo.size.width - largest))) }
+                Spacer(minLength: 0)
+            }
+            .frame(width: geo.size.width, height: 6, alignment: .leading)
+            .background(Theme.field)
+            .clipShape(Capsule())
+        }
+        .frame(height: 6)
+        .help(logs.largestJob.map { "\($0): \(Formatting.bytes(logs.largestJobBytes)); other jobs: \(Formatting.bytes(logs.bytes - min(logs.bytes, logs.largestJobBytes)))" } ?? "")
     }
 }
 

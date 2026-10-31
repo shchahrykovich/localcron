@@ -13,6 +13,11 @@ public enum AppMenu {
         case showLog(String)
         /// Ask the user to allow the job (by id) to read its secrets.
         case allowSecrets(String)
+        /// A run more of the job (by id); `runEarly` runs its next
+        /// scheduled time now instead.
+        case runNow(String), runEarly(String)
+        /// The Runs tab for one job, and the editor of a job.
+        case showRuns(String), editJob(String)
         case installCLI, installClaude, installCodex, copyMCPCommand
         case openLogsFolder, openHelp
         case checkForUpdates, settings, quit
@@ -35,7 +40,7 @@ public enum AppMenu {
         case item(Item)
         case header(String)
         case separator
-        case submenu(title: String, symbol: String, entries: [Entry])
+        case submenu(title: String, symbol: String?, detail: String?, entries: [Entry])
     }
 
     /// A run in the menu: one that is queued or running, or the failed last
@@ -53,6 +58,21 @@ public enum AppMenu {
             self.jobID = jobID
             self.detail = detail
             self.console = console
+        }
+    }
+
+    /// A job whose next scheduled run comes soon.
+    public struct UpcomingRun: Equatable, Sendable {
+        public var jobID: String
+        /// "12:00, in 1 h 20 min", "tomorrow 02:00".
+        public var detail: String
+        /// "12:00": for "Run Now, Instead of 12:00".
+        public var time: String
+
+        public init(jobID: String, detail: String, time: String) {
+            self.jobID = jobID
+            self.detail = detail
+            self.time = time
         }
     }
 
@@ -81,9 +101,14 @@ public enum AppMenu {
         public var failed: [RunEntry]
         /// Jobs waiting for the user to allow their secrets.
         public var waiting: [WaitingJob]
+        /// The next runs, soonest first.
+        public var upcoming: [UpcomingRun]
+        /// Every job, for Run a Job Now.
+        public var jobIDs: [String]
 
         public init(appName: String, cliInstalled: Bool, summary: String?, paused: Bool = false,
-                    running: [RunEntry] = [], failed: [RunEntry] = [], waiting: [WaitingJob] = []) {
+                    running: [RunEntry] = [], failed: [RunEntry] = [], waiting: [WaitingJob] = [],
+                    upcoming: [UpcomingRun] = [], jobIDs: [String] = []) {
             self.appName = appName
             self.cliInstalled = cliInstalled
             self.summary = summary
@@ -91,6 +116,8 @@ public enum AppMenu {
             self.running = running
             self.failed = failed
             self.waiting = waiting
+            self.upcoming = upcoming
+            self.jobIDs = jobIDs
         }
     }
 
@@ -116,7 +143,7 @@ public enum AppMenu {
         }
         if !c.running.isEmpty {
             entries.append(.separator)
-            entries.append(.header("Running"))
+            entries.append(.header("Working now"))
             for run in c.running {
                 if run.console {
                     entries.append(.item(Item(title: "Open Terminal for \(run.jobID)", symbol: "terminal", action: .openTerminal(run.runID),
@@ -140,16 +167,37 @@ public enum AppMenu {
                                           detail: run.detail)))
             }
         }
+        if c.summary != nil && (!c.upcoming.isEmpty || !c.jobIDs.isEmpty) {
+            entries.append(.separator)
+            if !c.upcoming.isEmpty {
+                entries.append(.header("Next to run"))
+                for next in c.upcoming {
+                    entries.append(.submenu(title: next.jobID, symbol: "clock", detail: next.detail, entries: [
+                        .item(Item(title: "Run Now", symbol: "play.fill", action: .runNow(next.jobID),
+                                   detail: "A run more; \(next.time) still runs")),
+                        .item(Item(title: "Run Now, Instead of \(next.time)", symbol: "forward.end", action: .runEarly(next.jobID),
+                                   detail: "The run of \(next.time) runs now, not at its time")),
+                        .separator,
+                        .item(Item(title: "Show Runs", symbol: "list.bullet", action: .showRuns(next.jobID))),
+                        .item(Item(title: "Edit Job…", symbol: "pencil", action: .editJob(next.jobID))),
+                    ]))
+                }
+            }
+            if !c.jobIDs.isEmpty {
+                entries.append(.submenu(title: "Run a Job Now", symbol: "play", detail: nil,
+                                        entries: c.jobIDs.map { .item(Item(title: $0, action: .runNow($0))) }))
+            }
+        }
         return entries + [
             .separator,
-            .header("Coding agents"),
-            .item(Item(title: "Add to Claude Code…", symbol: "sparkles", action: .installClaude)),
-            .item(Item(title: "Add to Codex…", symbol: "chevron.left.forwardslash.chevron.right", action: .installCodex)),
-            .item(Item(title: "Install Command Line Tool…", symbol: "terminal", action: .installCLI, checked: c.cliInstalled)),
-            .item(Item(title: "Copy MCP Command", symbol: "doc.on.doc", action: .copyMCPCommand)),
-            .separator,
+            .submenu(title: "Coding Agents", symbol: "sparkles", detail: nil, entries: [
+                .item(Item(title: "Add to Claude Code…", symbol: "sparkles", action: .installClaude)),
+                .item(Item(title: "Add to Codex…", symbol: "chevron.left.forwardslash.chevron.right", action: .installCodex)),
+                .item(Item(title: "Install Command Line Tool…", symbol: "terminal", action: .installCLI, checked: c.cliInstalled)),
+                .item(Item(title: "Copy MCP Command", symbol: "doc.on.doc", action: .copyMCPCommand)),
+            ]),
             .item(Item(title: "Show Run Logs Folder", symbol: "folder", action: .openLogsFolder)),
-            .item(Item(title: "\(c.appName) Help", symbol: "questionmark.circle", action: .openHelp,
+            .item(Item(title: "Help", symbol: "questionmark.circle", action: .openHelp,
                        detail: "Every command, for you and your agents")),
             .item(Item(title: "Check for Updates…", symbol: "arrow.clockwise", action: .checkForUpdates)),
             .item(Item(title: "Settings…", symbol: "slider.horizontal.3", action: .settings, shortcut: ",")),

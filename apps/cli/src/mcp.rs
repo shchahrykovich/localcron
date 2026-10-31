@@ -69,6 +69,13 @@ pub struct AddJobArgs {
     /// Why the job exists, for the user.
     #[serde(default)]
     pub note: Option<String>,
+    /// The job's icon in the menu bar app: the text of an SVG drawing, up to 64 KB. Scripts and links are removed. With
+    /// replace and no icon, the old icon stays; "" removes it.
+    #[serde(default)]
+    pub icon: Option<String>,
+    /// Draw the icon in its own colors. Default false: its shape in the text color.
+    #[serde(default)]
+    pub icon_colors: Option<bool>,
     /// Change the job when the id exists. Without it an existing id is an error.
     #[serde(default)]
     pub replace: Option<bool>,
@@ -97,6 +104,8 @@ impl AddJobArgs {
             enabled: self.enabled.unwrap_or(true),
             catch_up: self.catch_up.unwrap_or(true),
             note: self.note.unwrap_or_default(),
+            icon: self.icon,
+            icon_colors: self.icon_colors.unwrap_or(false),
             updated_at: None,
         };
         Ok(SetJobParams { job, replace: self.replace.unwrap_or(false) })

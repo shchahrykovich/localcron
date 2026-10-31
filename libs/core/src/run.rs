@@ -65,6 +65,9 @@ pub struct Run {
     /// Absolute path of the output file.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub log: Option<String>,
+    /// The size of the log file when the run ended.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_bytes: Option<u64>,
     /// Why it failed, was skipped or stopped.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub message: String,

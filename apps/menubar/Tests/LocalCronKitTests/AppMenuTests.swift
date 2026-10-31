@@ -8,15 +8,33 @@ final class AppMenuTests: XCTestCase {
             switch $0 {
             case let .item(item): item.title
             case let .header(title): "# \(title)"
-            default: nil
+            case let .submenu(title, _, _, _): "\(title) ▸"
+            case .separator: nil
             }
         }
     }
 
+    /// Every item, also those in submenus.
+    private func allItems(_ entries: [AppMenu.Entry]) -> [AppMenu.Item] {
+        entries.flatMap { entry -> [AppMenu.Item] in
+            switch entry {
+            case let .item(item): [item]
+            case let .submenu(_, _, _, children): allItems(children)
+            default: []
+            }
+        }
+    }
+
+    private func submenu(_ title: String, in entries: [AppMenu.Entry]) -> (detail: String?, entries: [AppMenu.Entry])? {
+        for case let .submenu(t, _, detail, children) in entries where t == title { return (detail, children) }
+        return nil
+    }
+
     private func context(paused: Bool = false, running: [AppMenu.RunEntry] = [], failed: [AppMenu.RunEntry] = [],
-                         waiting: [AppMenu.WaitingJob] = [], daemon: Bool = true) -> AppMenu.Context {
+                         waiting: [AppMenu.WaitingJob] = [], upcoming: [AppMenu.UpcomingRun] = [], jobIDs: [String] = [],
+                         daemon: Bool = true) -> AppMenu.Context {
         AppMenu.Context(appName: "LocalCron", cliInstalled: false, summary: daemon ? "2 jobs" : nil, paused: paused,
-                        running: running, failed: failed, waiting: waiting)
+                        running: running, failed: failed, waiting: waiting, upcoming: upcoming, jobIDs: jobIDs)
     }
 
     func testEntries() {
@@ -24,10 +42,29 @@ final class AppMenuTests: XCTestCase {
         guard case let .item(first) = entries.first else { return XCTFail("no first item") }
         XCTAssertEqual(first.title, "Open LocalCron")
         XCTAssertEqual(first.detail, "2 jobs")
-        let actions = entries.compactMap { if case let .item(i) = $0 { i.action } else { nil } }
+        let actions = allItems(entries).map(\.action)
         for needed: AppMenu.Action in [.installClaude, .installCodex, .installCLI, .openHelp, .checkForUpdates, .quit] {
             XCTAssertTrue(actions.contains(needed), "\(needed)")
         }
+        XCTAssertNotNil(submenu("Coding Agents", in: entries), "the agent commands are one submenu")
+        XCTAssertTrue(titles(entries).contains("Help"), "not \"LocalCron Help\"")
+    }
+
+    func testTheNextRunsEachHaveASubmenuToRunThemNow() throws {
+        let upcoming = [AppMenu.UpcomingRun(jobID: "pr-review", detail: "12:00, in 1 h 20 min", time: "12:00"),
+                        AppMenu.UpcomingRun(jobID: "nightly-tests", detail: "tomorrow 02:00", time: "02:00")]
+        let entries = AppMenu.entries(context(upcoming: upcoming, jobIDs: ["nightly-tests", "pr-review", "release"]))
+        let list = titles(entries)
+        let start = try XCTUnwrap(list.firstIndex(of: "# Next to run"))
+        XCTAssertEqual(Array(list[start...].prefix(4)), ["# Next to run", "pr-review ▸", "nightly-tests ▸", "Run a Job Now ▸"])
+        let pr = try XCTUnwrap(submenu("pr-review", in: entries))
+        XCTAssertEqual(pr.detail, "12:00, in 1 h 20 min")
+        XCTAssertEqual(allItems(pr.entries).map(\.title), ["Run Now", "Run Now, Instead of 12:00", "Show Runs", "Edit Job…"])
+        XCTAssertEqual(allItems(pr.entries).map(\.action), [.runNow("pr-review"), .runEarly("pr-review"), .showRuns("pr-review"),
+                                                             .editJob("pr-review")])
+        let any = try XCTUnwrap(submenu("Run a Job Now", in: entries))
+        XCTAssertEqual(allItems(any.entries).map(\.action), [.runNow("nightly-tests"), .runNow("pr-review"), .runNow("release")])
+        XCTAssertFalse(titles(AppMenu.entries(context(upcoming: upcoming, daemon: false))).contains("# Next to run"))
     }
 
     func testPauseIsOfferedWhileTheDaemonRuns() {
@@ -48,7 +85,7 @@ final class AppMenuTests: XCTestCase {
         let one = AppMenu.RunEntry(runID: "a.1", jobID: "a", detail: "running for 2 min")
         let two = AppMenu.RunEntry(runID: "b.3", jobID: "b", detail: "queued")
         XCTAssertEqual(titles(AppMenu.entries(context(running: [one]))).filter { $0.contains("Stop") || $0.hasPrefix("#") },
-                       ["# Running", "Stop a", "# Coding agents"])
+                       ["# Working now", "Stop a"])
         let entries = AppMenu.entries(context(running: [one, two]))
         XCTAssertTrue(titles(entries).contains("Stop All Runs"))
         let items = entries.compactMap { if case let .item(i) = $0 { i } else { nil } }

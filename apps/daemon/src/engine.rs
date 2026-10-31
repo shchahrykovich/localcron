@@ -26,6 +26,7 @@ use localcron_core::api::{
     RemoveSecretResult, RunJobParams, SecretInfo, SecretState, SetConfigParams, SetJobParams, SetJobResult, SetSecretParams, SetSecretResult,
     StatusResult,
 };
+use localcron_core::icon;
 use localcron_core::instance::Instance;
 use localcron_core::job::{Job, JobKind};
 use localcron_core::paths::Paths;
@@ -50,6 +51,8 @@ const LATE: chrono::Duration = chrono::Duration::seconds(90);
 /// After SIGTERM, a run has this long to stop before SIGKILL.
 const KILL_GRACE: Duration = Duration::from_secs(10);
 const DEFAULT_LOG_BYTES: u64 = 64 * 1024;
+/// The most runs `runs.json` keeps, whatever the space of their logs.
+const MAX_RUNS: usize = 5000;
 const MAX_LOG_BYTES: u64 = 1024 * 1024;
 
 type ApiResult<T> = Result<T, ApiError>;
@@ -138,6 +141,14 @@ impl Engine {
         if lost > 0 {
             log!("{lost} runs were unfinished when the daemon stopped");
         }
+        // Runs from before the log budget have no size yet.
+        let mut measured = 0;
+        for run in runs_file.runs.iter_mut().filter(|r| r.log_bytes.is_none()) {
+            if let Some(path) = run.log.as_deref() {
+                run.log_bytes = Some(file_size(path));
+                measured += 1;
+            }
+        }
 
         let local_now = Local::now();
         let mut jobs = BTreeMap::new();
@@ -177,9 +188,13 @@ impl Engine {
             keychain,
             app_check,
         });
-        if lost > 0 {
-            let st = engine.lock();
-            engine.save_runs(&st);
+        {
+            let mut st = engine.lock();
+            let before = st.runs.len();
+            engine.prune(&mut st);
+            if lost > 0 || measured > 0 || st.runs.len() != before {
+                engine.save_runs(&st);
+            }
         }
         engine
     }
@@ -305,6 +320,7 @@ impl Engine {
             exit_code: None,
             pid: None,
             log: None,
+            log_bytes: None,
             message: String::new(),
             console: None,
         };
@@ -322,7 +338,7 @@ impl Engine {
             log!("run {}: queued ({trigger:?})", run.id);
         }
         st.runs.push(run.clone());
-        self.prune(st, job_id);
+        self.prune(st);
         self.save_runs(st);
         run
     }
@@ -593,6 +609,7 @@ impl Engine {
         {
             let _ = file.write_all(footer.as_bytes());
         }
+        run.log_bytes = run.log.as_deref().map(file_size);
         log!("run {run_id}: {:?} {}", run.status, run.message);
         let (job_id, trigger, queued_at) = (run.job_id.clone(), run.trigger, run.queued_at);
         if !st.jobs.contains_key(&job_id) {
@@ -606,26 +623,50 @@ impl Engine {
         if done {
             self.remove_done(&mut st, &job_id);
         }
-        self.prune(&mut st, &job_id);
+        self.prune(&mut st);
         self.save_runs(&st);
         drop(st);
         self.notify();
     }
 
-    /// Keep the newest `keep_runs` finished runs of a job; delete the logs of
-    /// the others.
-    fn prune(&self, st: &mut State, job_id: &str) {
-        let keep = st.config.keep_runs as usize;
-        let finished: Vec<usize> =
-            st.runs.iter().enumerate().filter(|(_, r)| r.job_id == job_id && r.status.is_finished()).map(|(i, _)| i).collect();
-        if finished.len() <= keep {
+    /// Keep the run logs within `log_budget_mb`: delete the oldest finished
+    /// runs and their logs until the rest fits. The newest finished run of
+    /// each job is always kept, also when it alone is larger. At most
+    /// `MAX_RUNS` runs stay, so runs without a log cannot pile up.
+    fn prune(&self, st: &mut State) {
+        let budget = u64::from(st.config.log_budget_mb) * api::MB;
+        let mut newest = std::collections::HashSet::new();
+        let mut kept = vec![false; st.runs.len()];
+        for (i, run) in st.runs.iter().enumerate().rev() {
+            if run.status.is_finished() && st.jobs.contains_key(&run.job_id) && newest.insert(run.job_id.as_str()) {
+                kept[i] = true;
+            }
+        }
+        let mut bytes: u64 = st.runs.iter().filter(|r| r.status.is_finished()).filter_map(|r| r.log_bytes).sum();
+        let mut count = st.runs.len();
+        let mut gone = Vec::new();
+        // Oldest first: runs are added as they are queued.
+        for (i, run) in st.runs.iter().enumerate() {
+            if bytes <= budget && count <= MAX_RUNS {
+                break;
+            }
+            if kept[i] || !run.status.is_finished() {
+                continue;
+            }
+            bytes -= run.log_bytes.unwrap_or(0);
+            count -= 1;
+            gone.push(i);
+        }
+        if gone.is_empty() {
             return;
         }
-        let drop_set: Vec<usize> = finished[..finished.len() - keep].to_vec();
-        for i in drop_set.iter().rev() {
-            let run = st.runs.remove(*i);
+        for i in gone.into_iter().rev() {
+            let run = st.runs.remove(i);
             if let Some(path) = run.log {
                 let _ = fs::remove_file(path);
+            }
+            if !st.runs.iter().any(|r| r.job_id == run.job_id) {
+                let _ = fs::remove_dir_all(self.paths.run_logs(&run.job_id));
             }
         }
     }
@@ -642,32 +683,6 @@ impl Engine {
             let _ = self.save_secrets(st);
         }
         log!("job {job_id}: removed after its one run");
-        self.prune_removed(st);
-    }
-
-    /// Keep the newest `keep_runs` finished runs of removed one-off jobs, in
-    /// all; delete the logs of the others.
-    fn prune_removed(&self, st: &mut State) {
-        let keep = st.config.keep_runs as usize;
-        let gone: Vec<usize> = st
-            .runs
-            .iter()
-            .enumerate()
-            .filter(|(_, r)| r.status.is_finished() && !st.jobs.contains_key(&r.job_id))
-            .map(|(i, _)| i)
-            .collect();
-        if gone.len() <= keep {
-            return;
-        }
-        for i in gone[..gone.len() - keep].iter().rev() {
-            let run = st.runs.remove(*i);
-            if let Some(path) = run.log {
-                let _ = fs::remove_file(path);
-            }
-            if !st.runs.iter().any(|r| r.job_id == run.job_id) {
-                let _ = fs::remove_dir_all(self.paths.run_logs(&run.job_id));
-            }
-        }
     }
 
     fn forget_job_runs(&self, st: &mut State, job_id: &str) {
@@ -762,6 +777,7 @@ impl Engine {
             next,
             data_dir: self.paths.data.to_string_lossy().into_owned(),
             logs_dir: self.paths.logs.to_string_lossy().into_owned(),
+            logs: Some(log_usage(&st)),
         }
     }
 
@@ -777,6 +793,12 @@ impl Engine {
 
     pub fn set_job(&self, params: SetJobParams) -> ApiResult<SetJobResult> {
         let mut job = params.job;
+        // "" removes the icon; none keeps the old one when the job is replaced.
+        let keep_icon = job.icon.is_none();
+        job.icon = match job.icon.take().filter(|svg| !svg.trim().is_empty()) {
+            Some(svg) => Some(icon::clean_svg(&svg).map_err(invalid)?),
+            None => None,
+        };
         let local_now = Local::now();
         job.schedule = schedule::resolve(&job.schedule, &local_now).map_err(|e| invalid(e.0))?;
         let schedule = job.validate().map_err(invalid)?;
@@ -795,6 +817,10 @@ impl Engine {
                 ErrorCode::Exists,
                 format!("job {:?} exists; give replace: true to change it, or choose another id", job.id),
             ));
+        }
+        if keep_icon && let Some(old) = st.jobs.get(&job.id) {
+            job.icon = old.job.icon.clone();
+            job.icon_colors = old.job.icon_colors;
         }
         let same_schedule = st.jobs.get(&job.id).is_some_and(|s| s.job.schedule == job.schedule);
         let next_due = if same_schedule { next_free(&st.runs, &job.id, &schedule, local_now) } else { next_due };
@@ -1008,8 +1034,8 @@ impl Engine {
         if let Some(n) = params.max_concurrent {
             config.max_concurrent = n;
         }
-        if let Some(n) = params.keep_runs {
-            config.keep_runs = n;
+        if let Some(n) = params.log_budget_mb {
+            config.log_budget_mb = n;
         }
         let was_paused = st.config.paused;
         if let Some(paused) = params.paused {
@@ -1020,7 +1046,12 @@ impl Engine {
         }
         config.validate().map_err(invalid)?;
         store::save(&self.paths.config(), &config).map_err(|e| internal(format!("cannot save the config: {e}")))?;
+        let budget_changed = st.config.log_budget_mb != config.log_budget_mb;
         st.config = config.clone();
+        if budget_changed {
+            self.prune(&mut st);
+            self.save_runs(&st);
+        }
         match (was_paused, config.paused) {
             (false, true) => {
                 let queued: Vec<String> = st
@@ -1214,6 +1245,32 @@ fn next_free(runs: &[Run], job_id: &str, schedule: &Schedule, now: DateTime<Loca
 }
 
 /// A SIGTERM time so old that the scheduler sends SIGKILL at its next look.
+/// The size of a file; 0 when it is gone.
+fn file_size(path: &str) -> u64 {
+    fs::metadata(path).map_or(0, |m| m.len())
+}
+
+/// The space of all run logs. A run that is still going has no
+/// `log_bytes` yet: its file is measured now.
+fn log_usage(st: &State) -> api::LogUsage {
+    let mut by_job: BTreeMap<&str, u64> = BTreeMap::new();
+    let mut files = 0;
+    for run in &st.runs {
+        let Some(path) = run.log.as_deref() else { continue };
+        let bytes = if run.status.is_finished() { run.log_bytes.unwrap_or(0) } else { file_size(path) };
+        files += 1;
+        *by_job.entry(run.job_id.as_str()).or_default() += bytes;
+    }
+    let largest = by_job.iter().max_by_key(|(_, b)| **b).filter(|(_, b)| **b > 0);
+    api::LogUsage {
+        bytes: by_job.values().sum(),
+        files,
+        budget_bytes: u64::from(st.config.log_budget_mb) * api::MB,
+        largest_job: largest.map(|(id, _)| id.to_string()),
+        largest_job_bytes: largest.map_or(0, |(_, b)| *b),
+    }
+}
+
 fn grace_over() -> Instant {
     let now = Instant::now();
     now.checked_sub(KILL_GRACE).unwrap_or(now)

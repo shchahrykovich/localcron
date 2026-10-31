@@ -20,6 +20,12 @@ public struct JobDraft: Equatable, Sendable {
     public var enabled: Bool
     public var catchUp: Bool
     public var note: String
+    /// The text of an SVG drawing; "" for the default icon of the kind.
+    public var icon: String
+    /// Draw the icon in its own colors.
+    public var iconColors: Bool
+    /// The saved job has an icon: an empty `icon` must remove it.
+    private var hadIcon = false
     /// Kept as it was: the form does not edit it.
     public var env: [String: String]
     /// `secret_env` as rows the form can edit: variable and secret name.
@@ -41,6 +47,8 @@ public struct JobDraft: Equatable, Sendable {
         enabled = true
         catchUp = true
         note = ""
+        icon = ""
+        iconColors = false
         env = [:]
         secretRows = []
     }
@@ -60,6 +68,9 @@ public struct JobDraft: Equatable, Sendable {
         enabled = job.enabled
         catchUp = job.catchUp
         note = job.note
+        icon = job.icon ?? ""
+        iconColors = job.iconColors
+        hadIcon = job.icon != nil
         env = job.env
         secretRows = job.secretEnv.sorted { $0.key < $1.key }.map { SecretEnvRow(variable: $0.key, secret: $0.value) }
     }
@@ -112,7 +123,10 @@ public struct JobDraft: Equatable, Sendable {
             timeoutSecs: UInt64(max(1, timeoutMinutes)) * 60,
             enabled: enabled,
             catchUp: catchUp,
-            note: note.trimmingCharacters(in: .whitespacesAndNewlines)))
+            note: note.trimmingCharacters(in: .whitespacesAndNewlines),
+            // "" removes a saved icon; nil would keep it.
+            icon: icon.isEmpty ? (hadIcon ? "" : nil) : icon,
+            iconColors: !icon.isEmpty && iconColors))
     }
 }
 

@@ -43,6 +43,70 @@ public enum Formatting {
         return "\(s / 3600) h \((s % 3600) / 60) min"
     }
 
+    /// "12:00, in 1 h 20 min", "tomorrow 02:00", "Monday 09:00", "2 Nov 09:00":
+    /// the next runs in the menu.
+    public static func soon(_ date: Date, now: Date = Date(), calendar: Calendar = .current) -> String {
+        let time = clock(date, calendar: calendar)
+        switch dayOffset(from: now, to: date, calendar: calendar) {
+        case ...0: return "\(time), \(left(date.timeIntervalSince(now)))"
+        case 1: return "tomorrow \(time)"
+        case 2..<7: return "\(formatter("EEEE", calendar).string(from: date)) \(time)"
+        default: return "\(day(date, calendar: calendar, year: false)) \(time)"
+        }
+    }
+
+    /// "now", "in 20 min", "in 1 h 20 min", "in 3 h".
+    public static func left(_ seconds: TimeInterval) -> String {
+        let minutes = Int((seconds / 60).rounded(.up))
+        if minutes < 1 { return "now" }
+        if minutes < 60 { return "in \(minutes) min" }
+        return minutes % 60 == 0 ? "in \(minutes / 60) h" : "in \(minutes / 60) h \(minutes % 60) min"
+    }
+
+    /// A past time, short: "02:00" today, "yesterday 18:00", "28 Oct 09:00".
+    public static func when(_ date: Date, now: Date = Date(), calendar: Calendar = .current) -> String {
+        let time = clock(date, calendar: calendar)
+        switch dayOffset(from: date, to: now, calendar: calendar) {
+        case ...0: return time
+        case 1: return "yesterday \(time)"
+        default: return "\(day(date, calendar: calendar, year: false)) \(time)"
+        }
+    }
+
+    /// The title of a day of runs: "Today, Friday 30 October", "Yesterday",
+    /// "Wednesday 28 October", "Monday 3 November 2025".
+    public static func dayTitle(_ date: Date, now: Date = Date(), calendar: Calendar = .current) -> String {
+        let sameYear = calendar.component(.year, from: date) == calendar.component(.year, from: now)
+        let long = formatter(sameYear ? "EEEE d MMMM" : "EEEE d MMMM yyyy", calendar).string(from: date)
+        switch dayOffset(from: date, to: now, calendar: calendar) {
+        case 0: return "Today, \(long)"
+        case 1: return "Yesterday"
+        default: return long
+        }
+    }
+
+    /// "HH:mm".
+    public static func clock(_ date: Date, calendar: Calendar = .current) -> String {
+        formatter("HH:mm", calendar).string(from: date)
+    }
+
+    /// Sizes of logs, 1 MB = 1024 * 1024 bytes: "820 bytes", "12 KB",
+    /// "38 MB", "1 GB", "1.5 GB".
+    public static func bytes(_ n: UInt64) -> String {
+        let kb: Double = 1024, mb = kb * 1024, gb = mb * 1024
+        let v = Double(n)
+        if v < kb { return "\(n) bytes" }
+        if v < mb { return "\(Int((v / kb).rounded())) KB" }
+        if v < gb { return "\(Int((v / mb).rounded())) MB" }
+        let g = v / gb
+        return g.rounded() == (g * 10).rounded() / 10 ? "\(Int(g.rounded())) GB" : String(format: "%.1f GB", g)
+    }
+
+    /// Whole days from the day of `a` to the day of `b`.
+    static func dayOffset(from a: Date, to b: Date, calendar: Calendar) -> Int {
+        calendar.dateComponents([.day], from: calendar.startOfDay(for: a), to: calendar.startOfDay(for: b)).day ?? 0
+    }
+
     /// The editor's args field: one argument per line, or words split by
     /// spaces on one line. Quotes group words: `--allowedTools "Bash(git *)"`.
     public static func splitArgs(_ text: String) -> [String] {
@@ -75,7 +139,7 @@ public enum Formatting {
         args.contains(where: { $0.contains(" ") }) ? args.joined(separator: "\n") : args.joined(separator: " ")
     }
 
-    private static func formatter(_ format: String, _ calendar: Calendar) -> DateFormatter {
+    static func formatter(_ format: String, _ calendar: Calendar) -> DateFormatter {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_GB")
         f.calendar = calendar
@@ -84,7 +148,6 @@ public enum Formatting {
         return f
     }
 
-    private static func clock(_ d: Date, calendar: Calendar) -> String { formatter("HH:mm", calendar).string(from: d) }
     private static func weekday(_ d: Date, calendar: Calendar) -> String { formatter("EEE", calendar).string(from: d) }
     private static func day(_ d: Date, calendar: Calendar, year: Bool = true) -> String {
         formatter(year ? "d MMM yyyy" : "d MMM", calendar).string(from: d)

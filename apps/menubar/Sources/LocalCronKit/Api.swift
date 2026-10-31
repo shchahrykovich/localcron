@@ -7,7 +7,7 @@
 
 import Foundation
 
-public let apiVersion = "1.3"
+public let apiVersion = "1.4"
 
 public func apiMajor(_ version: String) -> Int? {
     version.split(separator: ".").first.flatMap { Int($0) }
@@ -129,13 +129,19 @@ public struct Job: Codable, Equatable, Sendable, Identifiable {
     public var enabled: Bool
     public var catchUp: Bool
     public var note: String
+    /// An SVG drawing, cleaned by the daemon. Nil: the default icon of the
+    /// kind. When saving, nil keeps the old icon and "" removes it.
+    public var icon: String?
+    /// Draw the icon in its own colors; otherwise its shape in the text color.
+    public var iconColors: Bool
     /// Set by the daemon.
     public var updatedAt: String?
 
     public init(id: String, schedule: String, kind: JobKind, command: String? = nil, prompt: String? = nil,
                 model: String? = nil, permissionMode: String? = nil, args: [String] = [], dir: String,
                 env: [String: String] = [:], secretEnv: [String: String] = [:], timeoutSecs: UInt64 = Job.defaultTimeout,
-                enabled: Bool = true, catchUp: Bool = true, note: String = "", updatedAt: String? = nil) {
+                enabled: Bool = true, catchUp: Bool = true, note: String = "", icon: String? = nil, iconColors: Bool = false,
+                updatedAt: String? = nil) {
         self.id = id
         self.schedule = schedule
         self.kind = kind
@@ -151,11 +157,14 @@ public struct Job: Codable, Equatable, Sendable, Identifiable {
         self.enabled = enabled
         self.catchUp = catchUp
         self.note = note
+        self.icon = icon
+        self.iconColors = iconColors
         self.updatedAt = updatedAt
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, schedule, kind, command, prompt, model, args, dir, env, enabled, note
+        case id, schedule, kind, command, prompt, model, args, dir, env, enabled, note, icon
+        case iconColors = "icon_colors"
         case permissionMode = "permission_mode"
         case secretEnv = "secret_env"
         case timeoutSecs = "timeout_secs"
@@ -180,6 +189,8 @@ public struct Job: Codable, Equatable, Sendable, Identifiable {
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
         catchUp = try c.decodeIfPresent(Bool.self, forKey: .catchUp) ?? true
         note = try c.decodeIfPresent(String.self, forKey: .note) ?? ""
+        icon = try c.decodeIfPresent(String.self, forKey: .icon)
+        iconColors = try c.decodeIfPresent(Bool.self, forKey: .iconColors) ?? false
         updatedAt = try c.decodeIfPresent(String.self, forKey: .updatedAt)
     }
 
@@ -201,6 +212,8 @@ public struct Job: Codable, Equatable, Sendable, Identifiable {
         try c.encode(enabled, forKey: .enabled)
         try c.encode(catchUp, forKey: .catchUp)
         if !note.isEmpty { try c.encode(note, forKey: .note) }
+        try c.encodeIfPresent(icon, forKey: .icon)
+        if iconColors { try c.encode(iconColors, forKey: .iconColors) }
         try c.encodeIfPresent(updatedAt, forKey: .updatedAt)
     }
 }
@@ -306,6 +319,8 @@ public struct Run: Codable, Equatable, Sendable, Identifiable {
     public var pid: UInt32?
     /// Absolute path of the output file.
     public var log: String?
+    /// The size of the log file when the run ended.
+    public var logBytes: UInt64?
     public var message: String
     /// The command that opens the run's interactive console (tmux), while a
     /// claude job runs in one.
@@ -319,11 +334,12 @@ public struct Run: Codable, Equatable, Sendable, Identifiable {
         case startedAt = "started_at"
         case endedAt = "ended_at"
         case exitCode = "exit_code"
+        case logBytes = "log_bytes"
     }
 
     public init(id: String, jobId: String, trigger: Trigger, status: RunStatus, dueAt: String? = nil, queuedAt: String,
                 startedAt: String? = nil, endedAt: String? = nil, exitCode: Int32? = nil, pid: UInt32? = nil,
-                log: String? = nil, message: String = "", console: String? = nil) {
+                log: String? = nil, logBytes: UInt64? = nil, message: String = "", console: String? = nil) {
         self.id = id
         self.jobId = jobId
         self.trigger = trigger
@@ -335,6 +351,7 @@ public struct Run: Codable, Equatable, Sendable, Identifiable {
         self.exitCode = exitCode
         self.pid = pid
         self.log = log
+        self.logBytes = logBytes
         self.message = message
         self.console = console
     }
@@ -352,6 +369,7 @@ public struct Run: Codable, Equatable, Sendable, Identifiable {
         exitCode = try c.decodeIfPresent(Int32.self, forKey: .exitCode)
         pid = try c.decodeIfPresent(UInt32.self, forKey: .pid)
         log = try c.decodeIfPresent(String.self, forKey: .log)
+        logBytes = try c.decodeIfPresent(UInt64.self, forKey: .logBytes)
         message = try c.decodeIfPresent(String.self, forKey: .message) ?? ""
         console = try c.decodeIfPresent(String.self, forKey: .console)
     }
@@ -369,6 +387,7 @@ public struct Run: Codable, Equatable, Sendable, Identifiable {
         try c.encodeIfPresent(exitCode, forKey: .exitCode)
         try c.encodeIfPresent(pid, forKey: .pid)
         try c.encodeIfPresent(log, forKey: .log)
+        try c.encodeIfPresent(logBytes, forKey: .logBytes)
         if !message.isEmpty { try c.encode(message, forKey: .message) }
         try c.encodeIfPresent(console, forKey: .console)
     }
@@ -401,9 +420,11 @@ public struct StatusResult: Codable, Equatable, Sendable {
     public var next: NextRun?
     public var dataDir: String
     public var logsDir: String
+    /// The space of the run logs. Nil from a daemon before 1.4.
+    public var logs: LogUsage?
 
     enum CodingKeys: String, CodingKey {
-        case pid, jobs, running, queued, paused, next
+        case pid, jobs, running, queued, paused, next, logs
         case daemonVersion = "daemon_version"
         case apiVersion = "api_version"
         case startedAt = "started_at"
@@ -429,20 +450,58 @@ public struct StatusResult: Codable, Equatable, Sendable {
         next = try c.decodeIfPresent(NextRun.self, forKey: .next)
         dataDir = try c.decode(String.self, forKey: .dataDir)
         logsDir = try c.decode(String.self, forKey: .logsDir)
+        logs = try c.decodeIfPresent(LogUsage.self, forKey: .logs)
+    }
+}
+
+public struct LogUsage: Codable, Equatable, Sendable {
+    public var bytes: UInt64
+    public var files: Int
+    /// Over it, the oldest logs are deleted.
+    public var budgetBytes: UInt64
+    /// The job whose logs use the most space.
+    public var largestJob: String?
+    public var largestJobBytes: UInt64
+
+    public init(bytes: UInt64, files: Int, budgetBytes: UInt64, largestJob: String? = nil, largestJobBytes: UInt64 = 0) {
+        self.bytes = bytes
+        self.files = files
+        self.budgetBytes = budgetBytes
+        self.largestJob = largestJob
+        self.largestJobBytes = largestJobBytes
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case bytes, files
+        case budgetBytes = "budget_bytes"
+        case largestJob = "largest_job"
+        case largestJobBytes = "largest_job_bytes"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        bytes = try c.decode(UInt64.self, forKey: .bytes)
+        files = try c.decode(Int.self, forKey: .files)
+        budgetBytes = try c.decode(UInt64.self, forKey: .budgetBytes)
+        largestJob = try c.decodeIfPresent(String.self, forKey: .largestJob)
+        largestJobBytes = try c.decodeIfPresent(UInt64.self, forKey: .largestJobBytes) ?? 0
     }
 }
 
 public struct Config: Codable, Equatable, Sendable {
+    public static let defaultLogBudgetMB: UInt32 = 500
+
     public var maxConcurrent: UInt32
-    public var keepRuns: UInt32
+    /// The space for run logs, in MB (1024 * 1024 bytes).
+    public var logBudgetMB: UInt32
     /// No scheduled run starts; a run someone asks for still does.
     public var paused: Bool
     /// The last resume. Times before it are not caught up.
     public var resumedAt: String?
 
-    public init(maxConcurrent: UInt32, keepRuns: UInt32, paused: Bool = false, resumedAt: String? = nil) {
+    public init(maxConcurrent: UInt32, logBudgetMB: UInt32 = Config.defaultLogBudgetMB, paused: Bool = false, resumedAt: String? = nil) {
         self.maxConcurrent = maxConcurrent
-        self.keepRuns = keepRuns
+        self.logBudgetMB = logBudgetMB
         self.paused = paused
         self.resumedAt = resumedAt
     }
@@ -450,14 +509,15 @@ public struct Config: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case paused
         case maxConcurrent = "max_concurrent"
-        case keepRuns = "keep_runs"
+        case logBudgetMB = "log_budget_mb"
         case resumedAt = "resumed_at"
     }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         maxConcurrent = try c.decode(UInt32.self, forKey: .maxConcurrent)
-        keepRuns = try c.decode(UInt32.self, forKey: .keepRuns)
+        // A daemon before 1.4 keeps a number of runs instead.
+        logBudgetMB = try c.decodeIfPresent(UInt32.self, forKey: .logBudgetMB) ?? Self.defaultLogBudgetMB
         paused = try c.decodeIfPresent(Bool.self, forKey: .paused) ?? false
         resumedAt = try c.decodeIfPresent(String.self, forKey: .resumedAt)
     }
@@ -465,20 +525,20 @@ public struct Config: Codable, Equatable, Sendable {
 
 public struct SetConfigParams: Codable, Equatable, Sendable {
     public var maxConcurrent: UInt32?
-    public var keepRuns: UInt32?
+    public var logBudgetMB: UInt32?
     /// Pause (true) or resume (false) every schedule.
     public var paused: Bool?
 
-    public init(maxConcurrent: UInt32? = nil, keepRuns: UInt32? = nil, paused: Bool? = nil) {
+    public init(maxConcurrent: UInt32? = nil, logBudgetMB: UInt32? = nil, paused: Bool? = nil) {
         self.maxConcurrent = maxConcurrent
-        self.keepRuns = keepRuns
+        self.logBudgetMB = logBudgetMB
         self.paused = paused
     }
 
     enum CodingKeys: String, CodingKey {
         case paused
         case maxConcurrent = "max_concurrent"
-        case keepRuns = "keep_runs"
+        case logBudgetMB = "log_budget_mb"
     }
 }
 

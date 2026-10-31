@@ -18,8 +18,13 @@ final class AppModel {
         case failed(String)
     }
 
-    enum Tab: Hashable {
-        case jobs, runs, secrets, settings
+    enum Tab: String, CaseIterable, Hashable {
+        case jobs = "Jobs", runs = "Runs", secrets = "Secrets"
+    }
+
+    /// The Runs tab as a list or as a month.
+    enum RunsMode: String, CaseIterable, Hashable {
+        case list = "List", calendar = "Calendar"
     }
 
     /// What the window shows in place of the tabs.
@@ -48,6 +53,31 @@ final class AppModel {
     var busy = false
     var tab: Tab = .jobs
     var page: Page = .tabs
+    var runsMode: RunsMode = .list
+    var runFilter: RunFilter = .all
+    /// The Runs tab shows only jobs whose id contains this.
+    var runJobFilter = ""
+    /// Folders the user closed in the Jobs tab.
+    var closedFolders: Set<String> = []
+    /// The next times of each job that is on, for the Today strip and the
+    /// calendars. Read from the daemon at most once a minute.
+    var planned: [String: [Date]] = [:]
+    private var plannedFor: [String: String] = [:]
+    private var plannedAt = Date.distantPast
+    /// Many more runs than `runs`, for the calendars. Loaded while one is shown.
+    var history: [Run] = []
+    /// The menu bar icon (Settings, General).
+    var iconStyle = IconStyle.saved(UserDefaults.standard.string(forKey: IconStyle.defaultsKey)) {
+        didSet { UserDefaults.standard.set(iconStyle.rawValue, forKey: IconStyle.defaultsKey) }
+    }
+    var iconColor = UserDefaults.standard.object(forKey: IconStyle.colorKey) as? Bool ?? true {
+        didSet { UserDefaults.standard.set(iconColor, forKey: IconStyle.colorKey) }
+    }
+    /// Set by StatusItemController: they open its windows.
+    var openSettings: (SettingsPage?) -> Void = { _ in }
+    var openWeek: () -> Void = {}
+    /// Ticks every 30 s, so times such as "in 20 min" stay right.
+    var now = Date()
     /// The popover is open: poll often.
     var windowOpen = false {
         didSet { if windowOpen && !oldValue { pollNow() } }
@@ -176,7 +206,7 @@ final class AppModel {
         do {
             let s = try await client.status()
             let j = try await client.listJobs()
-            let r = try await client.listRuns(limit: 100)
+            let r = try await client.listRuns(limit: 300)
             let c = try await client.config()
             status = s
             jobs = j
@@ -185,10 +215,40 @@ final class AppModel {
             // An older daemon has no secrets: not an error.
             secrets = (try? await client.listSecrets()) ?? []
             daemonProblem = nil
+            now = Date()
+            await refreshPlanned()
         } catch {
             status = nil
             daemonProblem = error.localizedDescription
         }
+    }
+
+    /// The next times of every job that is on, again when a schedule
+    /// changed or a minute passed.
+    private func refreshPlanned() async {
+        let wanted = Dictionary(uniqueKeysWithValues: jobs.filter(\.job.enabled).map { ($0.id, $0.job.schedule) })
+        guard wanted != plannedFor || Date().timeIntervalSince(plannedAt) > 60 else { return }
+        var times: [String: [Date]] = [:]
+        let horizon = Date().addingTimeInterval(8 * 86400)
+        for (id, schedule) in wanted {
+            guard let preview = try? await client.preview(schedule: schedule, count: 48) else { continue }
+            times[id] = preview.next.compactMap(ApiDate.parse).filter { $0 < horizon }
+        }
+        planned = times
+        plannedFor = wanted
+        plannedAt = Date()
+    }
+
+    /// Up to 5000 runs, for the calendars.
+    func loadHistory() async {
+        if let all = try? await client.listRuns(limit: 5000) { history = all }
+    }
+
+    /// Past runs and planned times as marks on a time line. Planned times
+    /// are left out while paused: they do not run.
+    func timeMarks(from runs: [Run]) -> [TimeMark] {
+        let past = runs.compactMap(TimeMark.init)
+        return paused ? past : past + TimeMark.planned(planned)
     }
 
     // MARK: Messages
@@ -293,6 +353,7 @@ final class AppModel {
             say("\(job.id) saved: \(result.job.scheduleText)\(next).")
             page = .tabs
             tab = .jobs
+            closedFolders.remove(result.job.job.dir)
             if result.job.secretsAllowed == false {
                 await allowSecrets(result.job)
             }
@@ -390,6 +451,17 @@ final class AppModel {
         page = .editor(JobDraft(job: job.job))
     }
 
+    /// The Runs tab, filtered to one job.
+    func showRuns(jobID: String) {
+        page = .tabs
+        tab = .runs
+        runsMode = .list
+        runFilter = .all
+        runJobFilter = jobID
+    }
+
+    func job(_ id: String) -> JobView? { jobs.first { $0.id == id } }
+
     func showLog(_ run: Run) {
         showLog(runID: run.id)
     }
@@ -472,9 +544,9 @@ final class AppModel {
         NSWorkspace.shared.open(FileManager.default.fileExists(atPath: runsDir.path) ? runsDir : dir)
     }
 
-    func setConfig(maxConcurrent: UInt32? = nil, keepRuns: UInt32? = nil) async {
+    func setConfig(maxConcurrent: UInt32? = nil, logBudgetMB: UInt32? = nil) async {
         await perform("Could not save the settings") {
-            try await client.setConfig(SetConfigParams(maxConcurrent: maxConcurrent, keepRuns: keepRuns))
+            try await client.setConfig(SetConfigParams(maxConcurrent: maxConcurrent, logBudgetMB: logBudgetMB))
         }
     }
 
@@ -565,30 +637,31 @@ final class AppModel {
     }
 
     var menuContext: AppMenu.Context {
-        var summary: String?
-        if let status {
-            summary = "\(status.jobs) job\(status.jobs == 1 ? "" : "s")"
-            if status.running > 0 { summary! += ", \(status.running) running" }
-            if let next = status.next, let at = ApiDate.parse(next.at) {
-                summary! += ", next: \(next.jobId) \(Formatting.next(at))"
-            }
-        }
+        let now = Date()
+        let summary = status.map { "\($0.enabledJobs) of \($0.jobs) on" + ($0.paused ? ", paused" : "") }
         let running = activeRuns.map { run in
-            let detail = run.status == .queued ? "queued" : run.seconds.map { "running for \(Formatting.duration($0))" }
+            let detail = run.status == .queued ? "queued" : run.seconds(now: now).map { Formatting.duration($0) }
             return AppMenu.RunEntry(runID: run.id, jobID: run.jobId, detail: detail, console: run.console != nil)
         }
         let failed = status == nil ? [] : jobs.compactMap { job -> AppMenu.RunEntry? in
             guard let last = job.lastRun, last.status.isFailure else { return nil }
-            var parts = [last.status.title]
-            if let code = last.exitCode { parts.append("exit \(code)") }
-            if let ended = ApiDate.parse(last.endedAt) { parts.append(Formatting.past(ended)) }
-            return AppMenu.RunEntry(runID: last.id, jobID: job.id, detail: parts.joined(separator: " · "))
+            var parts: [String] = []
+            if let at = last.shownAt { parts.append(Formatting.when(at, now: now)) }
+            parts.append(last.exitCode.map { "exit \($0)" } ?? last.status.title.lowercased())
+            return AppMenu.RunEntry(runID: last.id, jobID: job.id, detail: parts.joined(separator: ", "))
         }
+        let upcoming = paused ? [] : jobs
+            .compactMap { job in ApiDate.parse(job.nextRun).map { (job.id, $0) } }
+            .filter { id, _ in job(id)?.job.enabled == true }
+            .sorted { $0.1 < $1.1 }
+            .prefix(3)
+            .map { id, at in AppMenu.UpcomingRun(jobID: id, detail: Formatting.soon(at, now: now), time: Formatting.clock(at)) }
         let waiting = status == nil ? [] : jobs.filter { $0.secretsAllowed == false }.map {
             AppMenu.WaitingJob(jobID: $0.id, secrets: Array(Set($0.job.secretEnv.values)).sorted())
         }
         return AppMenu.Context(appName: Instance.current.appName, cliInstalled: cliInstalled, summary: summary,
-                               paused: paused, running: running, failed: failed, waiting: waiting)
+                               paused: paused, running: running, failed: failed, waiting: waiting,
+                               upcoming: Array(upcoming), jobIDs: status == nil ? [] : jobs.map(\.id))
     }
 
     // MARK: Updates

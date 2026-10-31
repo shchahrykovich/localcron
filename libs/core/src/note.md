@@ -47,7 +47,8 @@ The MCP server `{{CLI}}` has these tools. The CLI `{{CLI}}` does the same
 4. A token or key the job needs goes in `secret_env`, never in `env` or the
    prompt: see Secrets below.
 5. `dir` is the project folder. The MCP server uses your current folder when
-   you leave it out.
+   you leave it out. When the user wants an icon for the job, `icon` takes
+   the text of an SVG drawing, up to 64 KB.
 6. Tell the user the job id, the schedule in words (`schedule_text` in the
    reply) and the next run time (`next_run`).
 

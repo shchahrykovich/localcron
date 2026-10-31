@@ -105,9 +105,10 @@ enum Command {
         /// Runs at the same time; more wait in a queue.
         #[arg(long)]
         max_concurrent: Option<u32>,
-        /// Finished runs kept per job.
+        /// The space for run logs, in MB. Over it the oldest logs are
+        /// deleted; the newest run of each job is always kept.
         #[arg(long)]
-        keep_runs: Option<u32>,
+        log_budget_mb: Option<u32>,
     },
     /// Values for jobs, such as API tokens, kept in the macOS Keychain.
     #[command(subcommand)]
@@ -202,6 +203,14 @@ struct AddArgs {
     disabled: bool,
     #[arg(long)]
     note: Option<String>,
+    /// An SVG file, up to 64 KB: the job's icon in the menu bar app. The job
+    /// keeps a copy without scripts and links. With --replace and no
+    /// --icon, the old icon stays; --icon "" removes it.
+    #[arg(long)]
+    icon: Option<PathBuf>,
+    /// Draw the icon in its own colors, not in the text color.
+    #[arg(long)]
+    icon_colors: bool,
     /// Change the job if the id exists.
     #[arg(long)]
     replace: bool,
@@ -256,6 +265,10 @@ fn run(cli: Cli, instance: &Instance, paths: &Paths) -> anyhow::Result<ExitCode>
                     println!("next: {} {}", next.job_id, when(&next.at));
                 }
                 println!("data: {}\nlogs: {}", s.data_dir, s.logs_dir);
+                if let Some(l) = s.logs {
+                    let mb = |b: u64| b.div_ceil(localcron_core::api::MB);
+                    println!("log space: {} MB of {} MB in {} files", mb(l.bytes), mb(l.budget_bytes), l.files);
+                }
             }
         }
         Command::List => {
@@ -408,17 +421,17 @@ fn run(cli: Cli, instance: &Instance, paths: &Paths) -> anyhow::Result<ExitCode>
             }
         }
         Command::Secret(command) => secret(&call, instance, command, json)?,
-        Command::Config { max_concurrent, keep_runs } => {
-            let v = if max_concurrent.is_none() && keep_runs.is_none() {
+        Command::Config { max_concurrent, log_budget_mb } => {
+            let v = if max_concurrent.is_none() && log_budget_mb.is_none() {
                 call("get_config", serde_json::to_value(Empty {})?)?
             } else {
-                call("set_config", serde_json::to_value(SetConfigParams { max_concurrent, keep_runs, paused: None })?)?
+                call("set_config", serde_json::to_value(SetConfigParams { max_concurrent, log_budget_mb, paused: None })?)?
             };
             if json {
                 show(&v)?;
             } else {
                 let c: Config = serde_json::from_value(v)?;
-                println!("max_concurrent: {}\nkeep_runs: {}\npaused: {}", c.max_concurrent, c.keep_runs, c.paused);
+                println!("max_concurrent: {}\nlog_budget_mb: {}\npaused: {}", c.max_concurrent, c.log_budget_mb, c.paused);
             }
         }
     }
@@ -575,6 +588,11 @@ impl AddArgs {
             let (k, v) = pair.split_once('=').with_context(|| format!("--secret-env {pair:?}: use NAME=SECRET"))?;
             secret_env.insert(k.to_string(), v.to_string());
         }
+        let icon = match &self.icon {
+            Some(path) if path.as_os_str().is_empty() => Some(String::new()),
+            Some(path) => Some(std::fs::read_to_string(path).with_context(|| format!("--icon {}: cannot read it as text", path.display()))?),
+            None => None,
+        };
         let timeout_secs = match self.timeout {
             Some(t) => parse_duration(&t)?,
             None => DEFAULT_TIMEOUT_SECS,
@@ -595,6 +613,8 @@ impl AddArgs {
             enabled: !self.disabled,
             catch_up: !self.no_catch_up,
             note: self.note.unwrap_or_default(),
+            icon,
+            icon_colors: self.icon_colors,
             updated_at: None,
         })
     }

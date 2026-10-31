@@ -7,6 +7,8 @@
         "command": "echo backing up; sleep 0.2",
         "dir": "/Users/me/shop",
         "enabled": true,
+        "icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\"><path d=\"M3.5 2.4h9l-2.2 3.1 2.2 3.1h-9z\" fill=\"#E5484D\"/></svg>",
+        "icon_colors": true,
         "id": "backup",
         "kind": "shell",
         "last_run": {
@@ -15,6 +17,7 @@
           "id": "backup.2",
           "job_id": "backup",
           "log": "/Users/me/Library/Logs/LocalCron/runs/backup/backup.2.log",
+          "log_bytes": 412,
           "pid": 9489,
           "queued_at": "2026-10-28T11:02:54Z",
           "started_at": "2026-10-28T11:02:54Z",
@@ -38,6 +41,7 @@
         "env": {
           "REVIEW_LIMIT": "10"
         },
+        "icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\"><circle cx=\"4.5\" cy=\"3.5\" r=\"1.6\" fill=\"none\" stroke=\"#000\"/></svg>",
         "id": "weekly-review",
         "kind": "claude",
         "model": "sonnet",

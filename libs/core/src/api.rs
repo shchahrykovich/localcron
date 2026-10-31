@@ -14,7 +14,7 @@ use crate::job::Job;
 use crate::run::Run;
 
 /// Major.minor. A client stops when the major number differs.
-pub const API_VERSION: &str = "1.3";
+pub const API_VERSION: &str = "1.4";
 
 pub fn api_major(version: &str) -> Option<u32> {
     version.split('.').next()?.parse().ok()
@@ -124,6 +124,23 @@ pub struct StatusResult {
     pub next: Option<NextRun>,
     pub data_dir: String,
     pub logs_dir: String,
+    /// The space the run logs use, against `Config::log_budget_mb`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub logs: Option<LogUsage>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LogUsage {
+    /// All run logs, finished and still written.
+    pub bytes: u64,
+    pub files: usize,
+    /// `log_budget_mb` in bytes. Over it, the oldest logs are deleted.
+    pub budget_bytes: u64,
+    /// The job whose logs use the most space.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub largest_job: Option<String>,
+    #[serde(default)]
+    pub largest_job_bytes: u64,
 }
 
 /// A job with what the daemon knows about it.
@@ -282,14 +299,17 @@ pub struct PreviewScheduleResult {
 }
 
 pub const DEFAULT_MAX_CONCURRENT: u32 = 2;
-pub const DEFAULT_KEEP_RUNS: u32 = 20;
+pub const DEFAULT_LOG_BUDGET_MB: u32 = 500;
+/// 100 GB.
+pub const MAX_LOG_BUDGET_MB: u32 = 100 * 1024;
+pub const MB: u64 = 1024 * 1024;
 
 fn default_max_concurrent() -> u32 {
     DEFAULT_MAX_CONCURRENT
 }
 
-fn default_keep_runs() -> u32 {
-    DEFAULT_KEEP_RUNS
+fn default_log_budget_mb() -> u32 {
+    DEFAULT_LOG_BUDGET_MB
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -297,9 +317,11 @@ pub struct Config {
     /// Runs at the same time. More wait in a queue.
     #[serde(default = "default_max_concurrent")]
     pub max_concurrent: u32,
-    /// Finished runs kept per job, with their log files.
-    #[serde(default = "default_keep_runs")]
-    pub keep_runs: u32,
+    /// The space for run logs, in MB (1 MB = 1024 * 1024 bytes). When the
+    /// logs use more, the oldest runs and their logs are deleted; the newest
+    /// run of each job is always kept.
+    #[serde(default = "default_log_budget_mb")]
+    pub log_budget_mb: u32,
     /// No scheduled run starts. A run someone asks for (run_job) still does.
     #[serde(default)]
     pub paused: bool,
@@ -311,7 +333,7 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Self { max_concurrent: DEFAULT_MAX_CONCURRENT, keep_runs: DEFAULT_KEEP_RUNS, paused: false, resumed_at: None }
+        Self { max_concurrent: DEFAULT_MAX_CONCURRENT, log_budget_mb: DEFAULT_LOG_BUDGET_MB, paused: false, resumed_at: None }
     }
 }
 
@@ -320,8 +342,8 @@ impl Config {
         if !(1..=16).contains(&self.max_concurrent) {
             return Err("max_concurrent must be 1 to 16".into());
         }
-        if !(1..=1000).contains(&self.keep_runs) {
-            return Err("keep_runs must be 1 to 1000".into());
+        if !(1..=MAX_LOG_BUDGET_MB).contains(&self.log_budget_mb) {
+            return Err(format!("log_budget_mb must be 1 to {MAX_LOG_BUDGET_MB} (100 GB)"));
         }
         Ok(())
     }
@@ -332,7 +354,7 @@ pub struct SetConfigParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_concurrent: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub keep_runs: Option<u32>,
+    pub log_budget_mb: Option<u32>,
     /// Pause (true) or resume (false) every schedule.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paused: Option<bool>,
@@ -420,6 +442,14 @@ pub struct RemoveSecretResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_old_config_with_keep_runs_gets_the_default_log_budget() {
+        let c: Config = serde_json::from_str(r#"{"max_concurrent": 3, "keep_runs": 20, "paused": false}"#).unwrap();
+        assert_eq!((c.max_concurrent, c.log_budget_mb), (3, DEFAULT_LOG_BUDGET_MB));
+        assert!(c.validate().is_ok());
+        assert!(Config { log_budget_mb: 0, ..c.clone() }.validate().unwrap_err().contains("log_budget_mb"));
+    }
 
     #[test]
     fn debug_hides_the_value() {

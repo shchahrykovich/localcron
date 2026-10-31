@@ -4,14 +4,17 @@ import Observation
 import SwiftUI
 
 /// The menu bar icon. A left click toggles the LocalCron window (a popover),
-/// a right click shows the app commands. This replaces SwiftUI's
+/// a right click shows the app commands. It also owns the Settings and week
+/// windows. This replaces SwiftUI's
 /// MenuBarExtra, which cannot open its window from code.
 @MainActor
 final class StatusItemController: NSObject, NSPopoverDelegate {
     private unowned let model: AppModel
-    /// Variable: the running, pause and warning badges make the icon wider.
+    /// Variable: the "Clock and text" style adds text.
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let popover = NSPopover()
+    private var settingsWindow: AppWindow?
+    private var weekWindow: AppWindow?
     /// When the popover last closed. A click on the icon first closes the
     /// popover, then reaches `clicked`; without this check the same click
     /// would open it again.
@@ -32,11 +35,25 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         popover.behavior = .transient
         popover.delegate = self
         let main = MainView(perform: { [weak self] action in self?.perform(action, fromWindow: true) })
-        let content = NSHostingController(rootView: main.environment(model).frame(width: 520, height: 600))
+        let content = NSHostingController(rootView: main.environment(model).frame(width: 480, height: 600))
         content.sizingOptions = .preferredContentSize
         // After the controller: setting it resets contentSize.
         popover.contentViewController = content
-        popover.contentSize = NSSize(width: 520, height: 600)
+        popover.contentSize = NSSize(width: 480, height: 600)
+        let windowPerform: (AppMenu.Action) -> Void = { [weak self] action in self?.perform(action, fromWindow: true) }
+        settingsWindow = AppWindow(title: "\(Instance.current.appName) Settings", size: NSSize(width: 780, height: 560),
+                                   minSize: NSSize(width: 640, height: 420)) { [model] in
+            AnyView(WindowFrame { SettingsView(perform: windowPerform) }.environment(model))
+        }
+        weekWindow = AppWindow(title: "\(Instance.current.appName) Runs", size: NSSize(width: 1120, height: 700),
+                               minSize: NSSize(width: 760, height: 480)) { [model] in
+            AnyView(WindowFrame { WeekView(perform: windowPerform) }.environment(model))
+        }
+        model.openSettings = { [weak self] page in self?.showSettings(page) }
+        model.openWeek = { [weak self] in
+            self?.popover.performClose(nil)
+            self?.weekWindow?.show()
+        }
         if let button = item.button {
             button.target = self
             button.action = #selector(clicked)
@@ -47,80 +64,51 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
 
     /// Orange icon: a local build, or any instance that is not the release.
     private let isDev = BuildKind.current == .dev || !Instance.current.isRelease
+    /// Turns the arc of the ring style while a run works.
+    private var spinTimer: Timer?
+    private var spin = 0.0
 
-    /// Redraw the icon whenever the daemon state changes.
+    /// Redraw the icon whenever the daemon state or the icon setting changes.
     private func trackIcon() {
         withObservationTracking {
-            let icon = model.statusIcon
-            let name = BuildKind.current == .dev ? "\(Instance.current.appName) (development build)" : Instance.current.appName
-            item.button?.image = image(for: icon)
-            item.button?.toolTip = icon.toolTip(appName: name)
+            drawIcon()
+            // Read so a poll redraws: the ring and the time move on.
+            _ = model.now
+            let spinning = model.iconStyle == .ring && model.statusIcon.state == .working
+            if spinning, spinTimer == nil {
+                spinTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 12, repeats: true) { [weak self] _ in
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        self.spin = (self.spin + 1.0 / 17).truncatingRemainder(dividingBy: 1)
+                        self.drawIcon()
+                    }
+                }
+            } else if !spinning, let timer = spinTimer {
+                timer.invalidate()
+                spinTimer = nil
+            }
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in self?.trackIcon() }
         }
     }
 
-    /// The clock with a green play sign on its bottom right corner while runs
-    /// are going, then a column: the warning triangle at the top, the pause
-    /// sign at the bottom. Positions: StatusIconLayout.
-    private func image(for icon: StatusIcon) -> NSImage? {
-        let name = Instance.current.appName
-        // The status bar ignores contentTintColor, so a color is drawn into
-        // the image, which then must not be a template.
-        let colored = isDev || icon.warning || icon.running > 0
-        let tint = NSImage.SymbolConfiguration(paletteColors: [isDev ? .systemOrange : Self.menuBarText])
-        // withSymbolConfiguration replaces the configuration: size and color
-        // go in one.
-        func symbol(_ symbolName: String, _ config: NSImage.SymbolConfiguration) -> NSImage? {
-            NSImage(systemSymbolName: symbolName, accessibilityDescription: name)?
-                .withSymbolConfiguration(colored ? config.applying(tint) : config)
-        }
-        guard let clock = symbol(icon.symbol, .init(pointSize: 14, weight: .regular)) else { return nil }
-        let badge = NSImage.SymbolConfiguration(pointSize: 7, weight: .bold)
-        let pause = icon.paused ? symbol("pause.fill", badge) : nil
-        let warning = icon.warning
-            ? NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: nil)?
-                .withSymbolConfiguration(badge.applying(.init(paletteColors: [.black, .systemYellow])))
-            : nil
-        let play = icon.running > 0
-            ? NSImage(systemSymbolName: "play.fill", accessibilityDescription: nil)?
-                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 8, weight: .heavy).applying(.init(paletteColors: [.systemGreen])))
-            : nil
-        if warning == nil && pause == nil && play == nil {
-            clock.isTemplate = !colored
-            return clock
-        }
-        let column = max(warning?.size.width ?? 0, pause?.size.width ?? 0)
-        let layout = StatusIconLayout(clock: clock.size, play: play?.size, column: column)
-        let image = NSImage(size: layout.size, flipped: false) { rect in
-            clock.draw(in: layout.clock)
-            if let play, let spot = layout.play, let halo = layout.playHalo, let context = NSGraphicsContext.current {
-                // Clear a ring of the clock around the badge, so it reads.
-                context.compositingOperation = .destinationOut
-                NSColor.black.setFill()
-                NSBezierPath(roundedRect: halo, xRadius: 2, yRadius: 2).fill()
-                context.compositingOperation = .sourceOver
-                play.draw(in: spot)
-            }
-            if let warning {
-                warning.draw(in: NSRect(origin: NSPoint(x: layout.columnX + (column - warning.size.width) / 2,
-                                                        y: rect.height - warning.size.height),
-                                        size: warning.size))
-            }
-            if let pause {
-                pause.draw(in: NSRect(origin: NSPoint(x: layout.columnX + (column - pause.size.width) / 2, y: 0), size: pause.size))
-            }
-            return true
-        }
-        image.isTemplate = !colored
+    private func drawIcon() {
+        let icon = model.statusIcon
+        let name = BuildKind.current == .dev ? "\(Instance.current.appName) (development build)" : Instance.current.appName
+        let style = model.iconStyle
+        let image = MenuBarIconRenderer.image(style: style, icon: icon, colored: model.iconColor, dev: isDev, spin: spin)
         image.accessibilityDescription = icon.toolTip(appName: name)
-        return image
-    }
-
-    /// Black on a light menu bar, white on a dark one, as a template image
-    /// would be.
-    private static let menuBarText = NSColor(name: nil) { appearance in
-        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .white : .black
+        guard let button = item.button else { return }
+        button.image = image
+        button.imagePosition = .imageLeading
+        let label = style == .clockText ? icon.label() : ""
+        if button.title != label {
+            button.attributedTitle = label.isEmpty ? NSAttributedString() : NSAttributedString(
+                string: " " + label,
+                attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize - 1, weight: .medium),
+                             .baselineOffset: 0.5])
+        }
+        button.toolTip = icon.toolTip(appName: name)
     }
 
     @objc private func clicked() {
@@ -135,6 +123,13 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         } else if Date().timeIntervalSince(closedAt) > 0.3 {
             showWindow()
         }
+    }
+
+    /// Settings, at `page` or at the page shown last.
+    func showSettings(_ page: SettingsPage?) {
+        if let page { UserDefaults.standard.set(page.rawValue, forKey: SettingsView.pageKey) }
+        popover.performClose(nil)
+        settingsWindow?.show()
     }
 
     func showWindow() {
@@ -196,9 +191,10 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
                 menu.addItem(.sectionHeader(title: title))
             case let .item(entry):
                 menu.addItem(menuItem(entry))
-            case let .submenu(title, symbol, children):
+            case let .submenu(title, symbol, detail, children):
                 let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-                item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+                if let symbol { item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) }
+                if let detail { setDetail(item, detail) }
                 item.submenu = makeMenu(children)
                 menu.addItem(item)
             }
@@ -215,10 +211,13 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         if entry.emphasized {
             item.attributedTitle = NSAttributedString(string: entry.title, attributes: [.font: NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)])
         }
-        if let detail = entry.detail {
-            if #available(macOS 14.4, *) { item.subtitle = detail } else { item.toolTip = detail }
-        }
+        if let detail = entry.detail { setDetail(item, detail) }
         return item
+    }
+
+    /// Small text under the title; a tooltip before macOS 14.4.
+    private func setDetail(_ item: NSMenuItem, _ detail: String) {
+        if #available(macOS 14.4, *) { item.subtitle = detail } else { item.toolTip = detail }
     }
 
     @objc private func menuAction(_ sender: NSMenuItem) {
@@ -262,8 +261,21 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
                 }
             }
         case .settings:
-            model.page = .tabs
-            model.tab = .settings
+            DispatchQueue.main.async { self.showSettings(nil) }
+        case let .runNow(jobID), let .runEarly(jobID):
+            guard let job = model.job(jobID) else { return }
+            let early = action == .runEarly(jobID)
+            Task { @MainActor in
+                model.message = nil
+                await model.runNow(job, early: early)
+                if !fromWindow, model.messageFailed, let why = model.message { alert(.failed("\(jobID) did not start", why)) }
+            }
+        case let .showRuns(jobID):
+            model.showRuns(jobID: jobID)
+            DispatchQueue.main.async { self.showWindow() }
+        case let .editJob(jobID):
+            guard let job = model.job(jobID) else { return }
+            model.edit(job)
             DispatchQueue.main.async { self.showWindow() }
         case .copyMCPCommand: model.copy(model.mcpCommand)
         case .openLogsFolder: model.openLogsFolder()

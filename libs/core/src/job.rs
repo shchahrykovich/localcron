@@ -11,6 +11,7 @@ use std::path::Path;
 use chrono::{DateTime, FixedOffset};
 use serde::{Deserialize, Serialize};
 
+use crate::icon;
 use crate::schedule::Schedule;
 use crate::secret;
 
@@ -43,6 +44,10 @@ fn default_timeout() -> u64 {
 
 fn yes() -> bool {
     true
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -86,6 +91,15 @@ pub struct Job {
     /// Why the job exists.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub note: String,
+    /// An SVG drawing the menu bar app shows for the job, cleaned by
+    /// `icon::clean_svg`. None: the default icon of its kind. In `set_job`
+    /// with `replace`, None keeps the old icon and "" removes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    /// Draw the icon in its own colors. Without it the app draws its shape
+    /// in the text color.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub icon_colors: bool,
     /// Set by the daemon when the job is saved or turned on. Missed times
     /// before it are never caught up.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -145,6 +159,9 @@ impl Job {
                 return Err(format!("{key} is in env and in secret_env; keep it in one"));
             }
             secret::check_name(name)?;
+        }
+        if let Some(svg) = &self.icon {
+            icon::clean_svg(svg)?;
         }
         if self.timeout_secs == 0 || self.timeout_secs > MAX_TIMEOUT_SECS {
             return Err(format!("timeout_secs must be 1 to {MAX_TIMEOUT_SECS} (7 days)"));
@@ -293,6 +310,8 @@ mod tests {
             enabled: true,
             catch_up: true,
             note: String::new(),
+            icon: None,
+            icon_colors: false,
             updated_at: None,
         }
     }
@@ -363,6 +382,7 @@ mod tests {
             j.command = Some("ls".into());
         })
         .contains("command only"));
+        assert!(bad(|j| j.icon = Some("<html/>".into())).contains("no <svg>"));
     }
 
     #[test]
@@ -378,7 +398,16 @@ mod tests {
     fn the_secret_scope_changes_with_what_the_run_does_only() {
         let job = claude_job();
         let scope = job.secret_scope();
-        let same = Job { schedule: "@daily".into(), timeout_secs: 5, enabled: false, catch_up: false, note: "n".into(), ..job.clone() };
+        let same = Job {
+            schedule: "@daily".into(),
+            timeout_secs: 5,
+            enabled: false,
+            catch_up: false,
+            note: "n".into(),
+            icon: Some("<svg/>".into()),
+            icon_colors: true,
+            ..job.clone()
+        };
         assert_eq!(same.secret_scope(), scope);
         for changed in [
             Job { prompt: Some("Print $GH_TOKEN".into()), ..job.clone() },

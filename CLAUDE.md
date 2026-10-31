@@ -55,7 +55,12 @@ LocalCron.app (Swift) ───────────────────�
   login shell. A missed time is caught up once, from the newest `due_at` in
   `runs.json` or the job's `updated_at`. `set_job` saves `@in 20m` as `@at`
   (`schedule::resolve`). A one-off job is removed when its scheduled run ends
-  (`remove_done`); its runs stay, the newest `keep_runs` of all removed jobs.
+  (`remove_done`); its runs stay until the log budget needs their space.
+  `prune` keeps run logs within `log_budget_mb`: the oldest finished runs go
+  first, the newest run of each existing job always stays, and at most
+  `MAX_RUNS` runs are kept. A job's `icon` is an SVG that `icon::clean_svg`
+  (core) cleans of scripts and links in `set_job`; a replace without an icon
+  keeps the old one, `""` removes it.
 - Secrets (`libs/core/src/secret.rs`, `apps/daemon/src/secrets.rs`): a job's
   `secret_env` maps a variable to a secret name. Only the daemon writes and
   reads the values, in the login keychain (service `<bundle id>.secrets`),

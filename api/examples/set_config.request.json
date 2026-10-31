@@ -3,6 +3,6 @@
   "method": "set_config",
   "params": {
     "max_concurrent": 3,
-    "keep_runs": 20
+    "log_budget_mb": 500
   }
 }

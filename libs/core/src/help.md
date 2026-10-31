@@ -62,7 +62,7 @@ A new job runs in the current folder; `--dir` changes it.
 | `{{CLI}} runs [ID]` | Recent runs, newest first |
 | `{{CLI}} log RUN` | The output of a run |
 | `{{CLI}} next "S"` | The next times of a schedule |
-| `{{CLI}} config` | Show or change the settings: `--max-concurrent N`, `--keep-runs N` |
+| `{{CLI}} config` | Show or change the settings: `--max-concurrent N`, `--log-budget-mb N` |
 | `{{CLI}} secret set NAME` | Store a secret's value in the Keychain |
 | `{{CLI}} secret describe NAME "TEXT"` | Change a secret's description |
 | `{{CLI}} secret list` | The secrets, without values |
@@ -75,7 +75,10 @@ Every command takes `--json` for the daemon's reply as JSON.
 Options of `add`: `--dir DIR`, `--model M`, `--permission-mode MODE`
 (Claude), `--arg A` (one more argument for claude or codex, repeat it),
 `--env NAME=VALUE`, `--secret-env NAME=SECRET`, `--timeout 30m`,
-`--no-catch-up`, `--disabled`, `--note TEXT`.
+`--no-catch-up`, `--disabled`, `--note TEXT`, `--icon FILE` (an SVG file up
+to 64 KB, shown for the job in the menu bar app; scripts and links in it are
+removed; `--icon ""` removes it), `--icon-colors` (draw the icon in its own
+colors, not in the text color).
 
 ## Schedules
 
@@ -140,8 +143,11 @@ new value when this one expires or leaks.
   running is skipped.
 - A run stops after its timeout, 1 hour by default (`--timeout`).
 - A job that runs once (`@at`, `@in`) is removed after its run. The run and
-  its log stay in `{{CLI}} runs`: the newest 20 of all such jobs
-  (`{{CLI}} config --keep-runs N`). A Run Now does not remove it.
+  its log stay in `{{CLI}} runs` until their space is needed. A Run Now does
+  not remove it.
+- Run logs may use 500 MB (`{{CLI}} config --log-budget-mb N`). When they use
+  more, the oldest runs and their logs are deleted first. The newest run of
+  each job is always kept. `{{CLI}} status` shows the space they use.
 - A time missed while the Mac slept or was off runs once at wake, unless
   the job has `--no-catch-up`. Times missed while paused do not run.
 - Runs use the PATH of your login shell, so `claude`, `codex`, `node` and

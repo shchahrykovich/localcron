@@ -337,22 +337,58 @@ fn jobs_and_runs_survive_a_restart() {
     assert_eq!(job["last_run"]["id"], run.as_str());
 }
 
+/// A shell command that prints this many bytes.
+fn print_bytes(n: usize) -> String {
+    format!("head -c {n} /dev/zero | tr '\\0' a")
+}
+
 #[test]
-fn only_the_newest_runs_are_kept() {
+fn the_oldest_logs_go_when_the_logs_use_more_than_the_budget() {
     let d = Daemon::start();
-    d.ok("set_config", json!({"keep_runs": 2}));
-    d.ok("set_job", json!({"job": d.shell_job("many", "true")}));
+    d.ok("set_config", json!({"log_budget_mb": 1}));
+    d.ok("set_job", json!({"job": d.shell_job("many", &print_bytes(400_000))}));
     let mut ids = vec![];
     for _ in 0..4 {
         let id = d.ok("run_job", json!({"id": "many"}))["run"]["id"].as_str().unwrap().to_string();
-        d.wait_status(&id, "succeeded");
+        let run = d.wait_status(&id, "succeeded");
+        assert!(run["log_bytes"].as_u64().unwrap() > 400_000, "{run}");
         ids.push(id);
     }
+    // Four logs of 400 KB do not fit in 1 MB; the two newest do.
     let runs = d.ok("list_runs", json!({"job_id": "many"}))["runs"].clone();
     let kept: Vec<&str> = runs.as_array().unwrap().iter().map(|r| r["id"].as_str().unwrap()).collect();
     assert_eq!(kept, [ids[3].as_str(), ids[2].as_str()]);
     let logs = std::fs::read_dir(d.home.path().join("logs/runs/many")).unwrap().count();
     assert_eq!(logs, 2);
+
+    let usage = d.ok("status", json!({}))["logs"].clone();
+    assert_eq!(usage["files"], 2, "{usage}");
+    assert_eq!(usage["budget_bytes"], 1024 * 1024);
+    assert_eq!(usage["largest_job"], "many");
+    let bytes = usage["bytes"].as_u64().unwrap();
+    assert!((800_000..=1024 * 1024).contains(&bytes), "{usage}");
+    assert_eq!(usage["largest_job_bytes"].as_u64().unwrap(), bytes);
+}
+
+#[test]
+fn the_newest_run_of_each_job_stays_also_over_the_budget() {
+    let d = Daemon::start();
+    d.ok("set_config", json!({"log_budget_mb": 1}));
+    d.ok("set_job", json!({"job": d.shell_job("big", &print_bytes(1_500_000))}));
+    let id = d.ok("run_job", json!({"id": "big"}))["run"]["id"].as_str().unwrap().to_string();
+    d.wait_status(&id, "succeeded");
+    assert_eq!(d.ok("list_runs", json!({"job_id": "big"}))["runs"].as_array().unwrap().len(), 1);
+
+    // A smaller budget deletes at once; the newest run of a job stays.
+    d.ok("set_config", json!({"log_budget_mb": 100}));
+    d.ok("set_job", json!({"job": d.shell_job("small", "echo hi")}));
+    for _ in 0..2 {
+        let id = d.ok("run_job", json!({"id": "small"}))["run"]["id"].as_str().unwrap().to_string();
+        d.wait_status(&id, "succeeded");
+    }
+    d.ok("set_config", json!({"log_budget_mb": 1}));
+    assert_eq!(d.ok("list_runs", json!({"job_id": "big"}))["runs"].as_array().unwrap().len(), 1);
+    assert_eq!(d.ok("list_runs", json!({"job_id": "small"}))["runs"].as_array().unwrap().len(), 1, "the older small run made room");
 }
 
 #[test]
@@ -466,17 +502,47 @@ fn an_early_run_of_a_timer_is_its_one_run() {
 }
 
 #[test]
-fn runs_of_removed_timers_are_kept_up_to_keep_runs() {
+fn the_run_of_a_removed_timer_stays_until_the_budget_needs_its_space() {
     let d = Daemon::start();
-    d.ok("set_config", json!({"keep_runs": 2, "max_concurrent": 3}));
-    for id in ["t1", "t2", "t3"] {
-        d.ok("set_job", json!({"job": timer(&d, id, "1s", "true")}));
-    }
-    wait_for(|| ["t1", "t2", "t3"].iter().all(|id| !job_exists(&d, id)), "the timers' jobs to be removed");
-    let runs = d.ok("list_runs", json!({}))["runs"].clone();
-    assert_eq!(runs.as_array().unwrap().len(), 2, "{runs}");
-    let log_dirs = std::fs::read_dir(d.home.path().join("logs/runs")).unwrap().count();
-    assert_eq!(log_dirs, 2);
+    d.ok("set_config", json!({"log_budget_mb": 1}));
+    d.ok("set_job", json!({"job": timer(&d, "t1", "1s", &print_bytes(700_000))}));
+    wait_for(|| !job_exists(&d, "t1"), "the timer's job to be removed");
+    assert_eq!(d.ok("list_runs", json!({"job_id": "t1"}))["runs"].as_array().unwrap().len(), 1);
+
+    // Its job is gone, so its newest run is not kept for it.
+    d.ok("set_job", json!({"job": d.shell_job("big", &print_bytes(700_000))}));
+    let id = d.ok("run_job", json!({"id": "big"}))["run"]["id"].as_str().unwrap().to_string();
+    d.wait_status(&id, "succeeded");
+    assert_eq!(d.ok("list_runs", json!({"job_id": "t1"}))["runs"].as_array().unwrap().len(), 0);
+    assert!(!d.home.path().join("logs/runs/t1").exists());
+    assert_eq!(d.ok("list_runs", json!({"job_id": "big"}))["runs"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn a_job_keeps_a_clean_icon_and_a_replace_without_one_keeps_it() {
+    let d = Daemon::start();
+    let mut job = d.shell_job("flag", "true");
+    job["icon"] = json!(r##"<svg viewBox="0 0 16 16" onload="x()"><script>x()</script><path d="M0 0h9" fill="#E5484D"/></svg>"##);
+    job["icon_colors"] = json!(true);
+    let saved = d.ok("set_job", json!({"job": job}))["job"].clone();
+    assert_eq!(saved["icon"], r##"<svg viewBox="0 0 16 16"><path d="M0 0h9" fill="#E5484D"/></svg>"##);
+    assert_eq!(saved["icon_colors"], true);
+
+    // An agent that does not know the icon replaces the job: it stays.
+    let mut plain = d.shell_job("flag", "echo changed");
+    let replaced = d.ok("set_job", json!({"job": plain, "replace": true}))["job"].clone();
+    assert_eq!(replaced["icon"], saved["icon"]);
+    assert_eq!(replaced["icon_colors"], true);
+
+    // "" removes it.
+    plain["icon"] = json!("");
+    let removed = d.ok("set_job", json!({"job": plain, "replace": true}))["job"].clone();
+    assert!(removed.get("icon").is_none() && removed.get("icon_colors").is_none(), "{removed}");
+
+    let mut bad = d.shell_job("flag", "true");
+    bad["icon"] = json!("<html></html>");
+    let e = d.call("set_job", json!({"job": bad, "replace": true})).unwrap_err();
+    assert!(e["message"].as_str().unwrap().contains("no <svg>"), "{e}");
 }
 
 #[test]

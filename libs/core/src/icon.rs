@@ -1,16 +1,34 @@
 //! A job's icon: an SVG drawing that the menu bar app shows next to the job.
 //!
-//! The daemon keeps a cleaned copy in the job. `clean_svg` removes every
-//! part of the drawing that could run code or load another file: scripts,
-//! event attributes (`onload=`), links (`href` to anything but `#id`),
-//! `<foreignObject>`, CSS `@import` and `url()` to another file, comments,
-//! and `<!DOCTYPE>` with its entities.
+//! The daemon keeps a cleaned copy in the job. `clean_svg` keeps only what
+//! draws: allowed elements (`ALLOWED`) with allowed attributes
+//! (`ATTRIBUTES`). Everything else goes, with what it holds: scripts,
+//! `<foreignObject>`, `<image>`, `<set>` and `<animate>`, event attributes,
+//! links (`href` to anything but `#id`), comments, `<!DOCTYPE>` with its
+//! entities. A value or a `<style>` that could load a file is dropped: one
+//! with `url()` to anything but `#id`, `@`, a backslash (a CSS escape), an
+//! entity, `image-set` or `expression`.
 
 /// The largest icon, before cleaning.
 pub const MAX_ICON_BYTES: usize = 64 * 1024;
 
-/// Elements removed with everything in them.
-const DROPPED: [&str; 8] = ["script", "foreignobject", "iframe", "object", "embed", "audio", "video", "image"];
+/// Elements that are kept, in lower case. Any other element is removed
+/// with everything in it; `<a>` loses only its own tags.
+const ALLOWED: [&str; 22] = [
+    "svg", "g", "path", "circle", "rect", "ellipse", "line", "polyline", "polygon", "defs", "lineargradient",
+    "radialgradient", "stop", "use", "title", "desc", "clippath", "mask", "symbol", "text", "tspan", "style",
+];
+
+/// Attributes that are kept, in lower case.
+const ATTRIBUTES: [&str; 64] = [
+    "id", "class", "style", "d", "x", "y", "x1", "y1", "x2", "y2", "cx", "cy", "r", "rx", "ry", "fx", "fy", "width",
+    "height", "viewbox", "preserveaspectratio", "points", "transform", "fill", "fill-opacity", "fill-rule", "clip-rule",
+    "stroke", "stroke-width", "stroke-linecap", "stroke-linejoin", "stroke-miterlimit", "stroke-dasharray",
+    "stroke-dashoffset", "stroke-opacity", "opacity", "color", "display", "visibility", "overflow", "clip-path", "mask",
+    "gradientunits", "gradienttransform", "spreadmethod", "offset", "stop-color", "stop-opacity", "clippathunits",
+    "maskunits", "maskcontentunits", "vector-effect", "font-family", "font-size", "font-weight", "text-anchor",
+    "dominant-baseline", "letter-spacing", "xmlns", "xmlns:xlink", "version", "href", "xlink:href", "xml:space",
+];
 
 /// Checks an SVG drawing and returns it without the parts that run code or
 /// load files. An error says why the text is not an icon.
@@ -23,6 +41,7 @@ pub fn clean_svg(text: &str) -> Result<String, String> {
     // elements of the same name.
     let mut dropping: Option<(String, usize)> = None;
     let mut saw_svg = false;
+    let mut in_style = false;
     let mut rest = text;
     while let Some(start) = rest.find('<') {
         if dropping.is_none() {
@@ -32,8 +51,9 @@ pub fn clean_svg(text: &str) -> Result<String, String> {
         if let Some(after) = rest.strip_prefix("<!--") {
             rest = after.find("-->").map_or("", |end| &after[end + 3..]);
         } else if rest.starts_with("<![CDATA[") {
+            // Only a <style> may hold one, and its text was checked.
             let end = rest.find("]]>").map_or(rest.len(), |e| e + 3);
-            if dropping.is_none() {
+            if dropping.is_none() && in_style {
                 out.push_str(&rest[..end]);
             }
             rest = &rest[end..];
@@ -65,24 +85,26 @@ pub fn clean_svg(text: &str) -> Result<String, String> {
                 }
                 continue;
             }
-            if DROPPED.contains(&tag.name.as_str()) {
+            // A link: keep what it holds, without the link.
+            if tag.name == "a" {
+                continue;
+            }
+            if !ALLOWED.contains(&tag.name.as_str()) {
                 if !tag.closing && !tag.self_closing {
                     dropping = Some((tag.name.clone(), 1));
                 }
                 continue;
             }
-            // A link: keep what it holds, without the link.
-            if tag.name == "a" {
-                continue;
-            }
             if tag.name == "style" && !tag.closing && !tag.self_closing {
                 let close = rest.to_ascii_lowercase().find("</style").unwrap_or(rest.len());
-                let css = &rest[..close];
-                if loads_a_file(css) {
+                if !safe_value(&rest[..close]) {
                     dropping = Some(("style".into(), 1));
-                    rest = &rest[close..];
                     continue;
                 }
+                in_style = true;
+            }
+            if tag.name == "style" && tag.closing {
+                in_style = false;
             }
             if tag.name == "svg" && !tag.closing {
                 saw_svg = true;
@@ -99,17 +121,16 @@ pub fn clean_svg(text: &str) -> Result<String, String> {
     Ok(out.trim().to_string())
 }
 
-/// CSS or an attribute value that loads another file: `@import`, or
-/// `url(...)` that is not a reference to an element of the drawing.
-fn loads_a_file(text: &str) -> bool {
+/// CSS or an attribute value that cannot load a file: every `url(` points
+/// to an element of the drawing (`url(#id)`), and nothing could hide one:
+/// no CSS escape (`\`), at-rule (`@import`), entity (`&#104;`),
+/// `image-set` or `expression`.
+fn safe_value(text: &str) -> bool {
     let lower = text.to_ascii_lowercase();
-    if lower.contains("@import") {
-        return true;
+    if ['\\', '@', '&'].iter().any(|c| lower.contains(*c)) || lower.contains("image-set") || lower.contains("expression") {
+        return false;
     }
-    lower.match_indices("url(").any(|(i, _)| {
-        let target = lower[i + 4..].trim_start_matches([' ', '"', '\'']);
-        !target.starts_with('#')
-    })
+    lower.match_indices("url(").all(|(i, _)| lower[i + 4..].trim_start_matches([' ', '"', '\'']).starts_with('#'))
 }
 
 /// The end of `<!DOCTYPE ...>`, after a `[...]` internal subset.
@@ -190,9 +211,8 @@ impl Tag {
             if !keep_attribute(name, value.as_deref()) {
                 continue;
             }
-            match value {
-                Some(v) => s.push_str(&format!(" {name}=\"{}\"", v.replace('"', "&quot;"))),
-                None => s.push_str(&format!(" {name}")),
+            if let Some(v) = value {
+                s.push_str(&format!(" {name}=\"{}\"", v.replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")));
             }
         }
         s.push_str(if self.self_closing { "/>" } else { ">" });
@@ -200,16 +220,18 @@ impl Tag {
     }
 }
 
+/// An allowed name with a value that loads nothing. `href` only points to
+/// an element of the drawing.
 fn keep_attribute(name: &str, value: Option<&str>) -> bool {
     let lower = name.to_ascii_lowercase();
-    if lower.starts_with("on") {
+    let Some(value) = value else { return false };
+    if !ATTRIBUTES.contains(&lower.as_str()) {
         return false;
     }
-    let local = lower.rsplit(':').next().unwrap_or(&lower);
-    if local == "href" || local == "src" {
-        return value.is_some_and(|v| v.trim_start().starts_with('#'));
+    if lower == "href" || lower == "xlink:href" {
+        return value.trim_start().starts_with('#') && !value.contains(['&', '\\']);
     }
-    !value.is_some_and(loads_a_file)
+    lower.starts_with("xmlns") || safe_value(value)
 }
 
 /// `a="1" b='2' c=3 d` as pairs; a value keeps its text as written.
@@ -296,8 +318,42 @@ mod tests {
 
     #[test]
     fn a_greater_than_sign_in_a_value_does_not_end_the_tag() {
-        let svg = r#"<svg><text data-x="a>b">1 &lt; 2</text></svg>"#;
-        assert_eq!(clean_svg(svg).unwrap(), svg);
+        let svg = r#"<svg><text font-family="a>b">1 &lt; 2</text></svg>"#;
+        assert_eq!(clean_svg(svg).unwrap(), r#"<svg><text font-family="a&gt;b">1 &lt; 2</text></svg>"#);
+    }
+
+    #[test]
+    fn elements_and_attributes_that_are_not_allowed_go() {
+        let svg = r##"<svg viewBox="0 0 16 16" data-x="1" sodipodi:docname="a.svg">
+<set attributeName="href" to="https://example.com/a"/>
+<animate attributeName="fill" values="url(https://example.com/a)"><animate/></animate>
+<filter><feImage href="https://example.com/a"/></filter>
+<svg:script>x()</svg:script>
+<metadata><rdf:RDF>made in Inkscape</rdf:RDF></metadata>
+<path d="M0 0h9" fill="url(&#104;ttps://example.com/a)" stroke="#000"/>
+<rect style="fill:u\rl(https://example.com/a)" width="2"/>
+<circle style="fill:image-set('https://example.com/a' 1x)" r="2"/>
+<use href="&#35;x"/>
+<![CDATA[<script>x()</script>]]>
+</svg>"##;
+        let clean = clean_svg(svg).unwrap();
+        for gone in ["data-x", "sodipodi", "<set", "animate", "filter", "feImage", "script", "metadata", "Inkscape", "example.com",
+                     "&#", "CDATA", "u\\rl", "image-set"] {
+            assert!(!clean.contains(gone), "{gone} is still in:\n{clean}");
+        }
+        for kept in [r##"<path d="M0 0h9" stroke="#000"/>"##, r#"<rect width="2"/>"#, r#"<circle r="2"/>"#, "<use/>"] {
+            assert!(clean.contains(kept), "{kept} is missing in:\n{clean}");
+        }
+    }
+
+    #[test]
+    fn a_style_that_could_hide_a_url_is_removed() {
+        for css in [r".a{fill:u\72 l(https://example.com/a)}", ".a{fill:url(&#104;ttps://example.com)}", "@font-face{src:url(x)}"] {
+            let clean = clean_svg(&format!("<svg><style>{css}</style><path/></svg>")).unwrap();
+            assert_eq!(clean, "<svg><path/></svg>", "{css}");
+        }
+        let kept = clean_svg("<svg><style><![CDATA[.a{fill:url(#g)}]]></style></svg>").unwrap();
+        assert_eq!(kept, "<svg><style><![CDATA[.a{fill:url(#g)}]]></style></svg>");
     }
 
     #[test]

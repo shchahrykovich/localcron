@@ -12,7 +12,7 @@ struct JobsView: View {
         } else {
             ScrollView {
                 VStack(spacing: 12) {
-                    TodayCard()
+                    TodayCard().zIndex(1) // its tooltip goes over the folders below
                     ForEach(model.jobs.filter { $0.secretsAllowed == false }) { WaitingBanner(job: $0) }
                     ForEach(JobGroups.byFolder(model.jobs)) { FolderSection(folder: $0) }
                 }
@@ -50,6 +50,55 @@ struct TodayCard: View {
             .padding(.top, 9)
             .padding(.bottom, 8)
         }
+        // Outside the card, which clips what is in it.
+        .overlayPreferenceValue(TipAnchor.self) { anchor in
+            GeometryReader { geo in
+                if let anchor, let mark = hovered {
+                    let dot = geo[anchor]
+                    StripTip(mark: mark, open: { open(mark) }, hovering: { overTip = $0; $0 ? keepTip() : hideTip() })
+                        .frame(width: StripTip.width)
+                        .position(x: min(max(dot.midX, StripTip.width / 2), geo.size.width - StripTip.width / 2),
+                                  y: dot.maxY + 6 + StripTip.height / 2)
+                }
+            }
+        }
+    }
+
+    // MARK: The tooltip of a mark
+
+    @State private var hovered: TimeMark?
+    @State private var overTip = false
+    @State private var hideTask: Task<Void, Never>?
+
+    private func hover(_ mark: TimeMark, _ on: Bool) {
+        if on {
+            keepTip()
+            hovered = mark
+        } else if hovered?.id == mark.id {
+            // Leaving a dot after the mouse entered the next one keeps the next one's tooltip.
+            hideTip()
+        }
+    }
+
+    private func keepTip() { hideTask?.cancel() }
+
+    /// A moment later, so the mouse can move from the dot onto the tooltip.
+    private func hideTip() {
+        hideTask?.cancel()
+        hideTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(200))
+            if !Task.isCancelled && !overTip { hovered = nil }
+        }
+    }
+
+    /// A run opens its log; a planned time opens the job.
+    private func open(_ mark: TimeMark) {
+        hovered = nil
+        if let runID = mark.runID {
+            model.showLog(runID: runID)
+        } else if let job = model.job(mark.jobID) {
+            model.edit(job)
+        }
     }
 
     private var nextText: Text {
@@ -71,8 +120,16 @@ struct TodayCard: View {
                 Rectangle().fill(Theme.neutralLine).frame(width: 1, height: 7).offset(x: min(x(label), width - 1), y: 8)
             }
             ForEach(marks) { mark in
-                dot(mark).position(x: x(mark.start), y: 11)
-                    .help("\(mark.jobID) \(mark.mark == .planned ? "at" : mark.mark.title.lowercased() + " at") \(Formatting.clock(mark.start))")
+                dot(mark)
+                    .frame(width: 16, height: 22)
+                    .contentShape(Rectangle())
+                    .onHover { hover(mark, $0) }
+                    .onTapGesture { open(mark) }
+                    .anchorPreference(key: TipAnchor.self, value: .bounds) { hovered?.id == mark.id ? $0 : nil }
+                    .accessibilityElement()
+                    .accessibilityLabel(StripTip.line(mark, now: model.now))
+                    .accessibilityAddTraits(.isButton)
+                    .position(x: x(mark.start), y: 11)
             }
             RoundedRectangle(cornerRadius: 1).fill(Theme.accentFill).frame(width: 2, height: 22).offset(x: nowX - 1)
         }
@@ -109,6 +166,80 @@ struct TodayCard: View {
         .font(.system(size: 10.5).monospacedDigit())
         .foregroundStyle(.secondary)
         .frame(width: width, alignment: .topLeading)
+    }
+}
+
+/// Where the hovered mark of the Today strip is.
+private struct TipAnchor: PreferenceKey {
+    static let defaultValue: Anchor<CGRect>? = nil
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+        value = value ?? nextValue()
+    }
+}
+
+/// The tooltip of a mark on the Today strip: the job's icon, what happened
+/// or comes, and what a click opens.
+private struct StripTip: View {
+    @Environment(AppModel.self) private var model
+    let mark: TimeMark
+    let open: () -> Void
+    let hovering: (Bool) -> Void
+    @State private var over = false
+
+    static let width: CGFloat = 250
+    static let height: CGFloat = 52
+
+    /// "Succeeded at 17:29, took 6 min 2 s", "Planned at 21:00, in 1 h 55 min".
+    static func line(_ mark: TimeMark, now: Date) -> String {
+        let at = Formatting.clock(mark.start)
+        switch mark.mark {
+        case .planned:
+            return "Planned at \(at), \(Formatting.left(mark.start.timeIntervalSince(now)))"
+        case .working:
+            return "Running since \(at), \(Formatting.duration(now.timeIntervalSince(mark.start)))"
+        default:
+            let took = mark.end.map { ", took \(Formatting.duration($0.timeIntervalSince(mark.start)))" } ?? ""
+            return "\(mark.mark.title) at \(at)\(took)"
+        }
+    }
+
+    var body: some View {
+        let job = model.job(mark.jobID)
+        Button(action: open) {
+            HStack(spacing: 9) {
+                if let job {
+                    JobTile(job: job, showDot: false)
+                } else {
+                    Image(systemName: "clock").frame(width: 24, height: 24).foregroundStyle(.secondary)
+                        .background(Theme.neutralSoft, in: RoundedRectangle(cornerRadius: 6))
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(mark.jobID).font(.system(size: 12, weight: .semibold)).lineLimit(1).truncationMode(.middle)
+                    HStack(spacing: 5) {
+                        Circle().fill(mark.mark.solid).frame(width: 6, height: 6)
+                        Text(Self.line(mark, now: model.now)).lineLimit(1)
+                    }
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 4)
+                if mark.runID != nil || job != nil {
+                    VStack(spacing: 1) {
+                        Image(systemName: mark.runID != nil ? "doc.text" : "pencil").font(.system(size: 11, weight: .medium))
+                        Text(mark.runID != nil ? "Log" : "Job").font(.system(size: 9.5, weight: .medium))
+                    }
+                    .foregroundStyle(over ? Theme.accent : .secondary)
+                }
+            }
+            .padding(.horizontal, 10)
+            .frame(height: Self.height)
+            .background(over ? Theme.rowHover : Theme.card, in: RoundedRectangle(cornerRadius: 9))
+            .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Theme.line, lineWidth: 0.5))
+            .shadow(color: .black.opacity(0.14), radius: 8, y: 3)
+            .contentShape(RoundedRectangle(cornerRadius: 9))
+        }
+        .buttonStyle(.plain)
+        .onHover { over = $0; hovering($0) }
+        .accessibilityLabel(mark.runID != nil ? "Open the log of this run" : "Open the job")
     }
 }
 

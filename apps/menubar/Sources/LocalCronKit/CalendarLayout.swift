@@ -68,6 +68,19 @@ public struct TimeMark: Equatable, Sendable, Identifiable {
 }
 
 /// The Today strip: 12 hours around now, now a third of the way in.
+public enum PlannedTimes {
+    /// The times of each schedule from the job's next run on. The schedule
+    /// alone does not know that a run early took a time (`run_job` with
+    /// `early`): the daemon's next run does. A job with no next run keeps no
+    /// time.
+    public static func from(_ times: [String: [Date]], next: [String: Date]) -> [String: [Date]] {
+        times.reduce(into: [:]) { out, item in
+            guard let first = next[item.key] else { return }
+            out[item.key] = item.value.filter { $0.timeIntervalSince(first) > -1 }
+        }
+    }
+}
+
 public struct DayStrip: Equatable, Sendable {
     public var start: Date
     public var end: Date

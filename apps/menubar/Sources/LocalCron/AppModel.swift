@@ -60,8 +60,15 @@ final class AppModel {
     /// Folders the user closed in the Jobs tab.
     var closedFolders: Set<String> = []
     /// The next times of each job that is on, for the Today strip and the
-    /// calendars. Read from the daemon at most once a minute.
-    var planned: [String: [Date]] = [:]
+    /// calendars, from each job's next run on: a time a run early took is
+    /// left out. The schedule times are read at most once a minute.
+    var planned: [String: [Date]] {
+        let next = jobs.reduce(into: [String: Date]()) { out, job in
+            if let at = job.nextRun.flatMap(ApiDate.parse) { out[job.id] = at }
+        }
+        return PlannedTimes.from(scheduleTimes, next: next)
+    }
+    private var scheduleTimes: [String: [Date]] = [:]
     private var plannedFor: [String: String] = [:]
     private var plannedAt = Date.distantPast
     /// Many more runs than `runs`, for the calendars. Loaded while one is shown.
@@ -238,7 +245,7 @@ final class AppModel {
             guard let preview = try? await client.preview(schedule: schedule, count: 48) else { continue }
             times[id] = preview.next.compactMap(ApiDate.parse).filter { $0 < horizon }
         }
-        planned = times
+        scheduleTimes = times
         plannedFor = wanted
         plannedAt = Date()
     }

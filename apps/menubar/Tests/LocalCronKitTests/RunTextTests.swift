@@ -114,6 +114,20 @@ final class CalendarLayoutTests: XCTestCase {
         XCTAssertEqual(strip.marks(marks).map(\.id), ["b"], "19:00 is past the end")
     }
 
+    /// A run early takes the place of the next time: the daemon's next run
+    /// moves to the day after, but the schedule still has today's time.
+    func testATimeThatAnEarlyRunTookIsNotPlanned() {
+        let today = ApiDate.parse("2026-10-30T21:00:00Z")!
+        let tomorrow = ApiDate.parse("2026-10-31T21:00:00Z")!
+        let other = ApiDate.parse("2026-10-30T20:00:00Z")!
+        let times = ["daily": [today, tomorrow], "hourly": [other], "done": [today]]
+        let next = ["daily": tomorrow, "hourly": other]
+        let left = PlannedTimes.from(times, next: next)
+        XCTAssertEqual(left["daily"], [tomorrow], "21:00 today ran early")
+        XCTAssertEqual(left["hourly"], [other])
+        XCTAssertNil(left["done"], "a job with no next run has no planned time")
+    }
+
     func testTheMonthStartsOnMondayAndFillsWholeWeeks() {
         let days = MonthGrid.days(of: testNow, calendar: utcCalendar)
         XCTAssertEqual(days.count, 35)

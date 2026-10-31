@@ -22,6 +22,14 @@ struct RunsView: View {
                     }
                     .fixedSize()
                     FilterField(prompt: "Filter by job", text: $model.runJobFilter)
+                } else if model.runsMode == .usage {
+                    Spacer()
+                    Picker("Period", selection: $model.usagePeriod) {
+                        ForEach(UsagePeriod.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .fixedSize()
                 } else {
                     Spacer()
                 }
@@ -31,6 +39,7 @@ struct RunsView: View {
             switch model.runsMode {
             case .list: RunList()
             case .calendar: MonthCalendarView()
+            case .usage: UsageView()
             }
         }
     }
@@ -104,6 +113,10 @@ struct RunRow: View {
                         .help(line.text)
                 }
                 Spacer(minLength: 4)
+                if let usage = run.usage {
+                    Text(Formatting.tokens(usage.total)).font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
+                        .help(RunText.tokens(usage))
+                }
                 Text(run.shownAt.map { Formatting.clock($0) } ?? "").font(.system(size: 12).monospacedDigit())
             }
             .padding(.horizontal, 12)
@@ -180,12 +193,7 @@ struct MonthCalendarView: View {
         }
     }
 
-    /// The history, with the newest runs from the last poll.
-    private var merged: [Run] {
-        let fresh = Dictionary(uniqueKeysWithValues: model.runs.map { ($0.id, $0) })
-        let old = model.history.filter { fresh[$0.id] == nil }
-        return model.runs + old
-    }
+    private var merged: [Run] { model.allRuns }
 
     private var monthTitle: String {
         let f = DateFormatter()
@@ -318,21 +326,75 @@ struct DayLanes: View {
                 let w = max(4, (m.end ?? (m.mark == .working ? model.now : m.start)).timeIntervalSince(m.start) / 86400 * width)
                 Group {
                     if m.mark == .planned {
-                        RoundedRectangle(cornerRadius: 2).strokeBorder(Theme.accentFill, lineWidth: 1.5).background(Theme.card)
+                        PlannedMark(mark: m)
                     } else {
                         RoundedRectangle(cornerRadius: 2).fill(m.mark.solid)
+                            .help("\(m.jobID) \(Formatting.clock(m.start)), \(m.mark.title.lowercased())")
+                            .onTapGesture { if let id = m.runID { model.showLog(runID: id) } }
                     }
                 }
                 .frame(width: w, height: 10)
                 .offset(x: min(x(m.start), width - w), y: 4)
-                .help("\(m.jobID) \(Formatting.clock(m.start)), \(m.mark.title.lowercased())")
-                .onTapGesture { if let id = m.runID { model.showLog(runID: id) } }
             }
             if now {
                 Rectangle().fill(Theme.accentFill).frame(width: 2, height: 18).offset(x: x(model.now) - 1)
             }
         }
         .frame(width: width, height: 18, alignment: .topLeading)
+    }
+}
+
+/// A planned time in a day lane. A click offers to run the job now; for the
+/// job's next time, the run can take its place (`run_job` with `early`).
+private struct PlannedMark: View {
+    @Environment(AppModel.self) private var model
+    let mark: TimeMark
+    @State private var asking = false
+
+    /// Only the next time of a job can be run early.
+    private var isNext: Bool {
+        guard let next = model.planned[mark.jobID]?.min() else { return false }
+        return abs(next.timeIntervalSince(mark.start)) < 1
+    }
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 2).strokeBorder(Theme.accentFill, lineWidth: 1.5).background(Theme.card)
+            .contentShape(Rectangle().inset(by: -4))
+            .help("\(mark.jobID) \(Formatting.clock(mark.start)), planned. Click to run it now.")
+            .onTapGesture { asking = true }
+            .contextMenu { buttons }
+            .popover(isPresented: $asking, arrowEdge: .bottom) {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 6) {
+                        if let job = model.job(mark.jobID) { JobGlyph(job: job.job, size: 12).foregroundStyle(.secondary) }
+                        Text(mark.jobID).font(.system(size: 12, weight: .semibold))
+                    }
+                    Text("Planned: \(Formatting.soon(mark.start, now: model.now))")
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                    HStack(spacing: 8) {
+                        if isNext {
+                            SmallButton("Run Now, Instead of \(Formatting.clock(mark.start))", prominent: true) { run(early: true) }
+                                .help("This run takes the place of the \(Formatting.clock(mark.start)) run; the schedule goes on after it")
+                        }
+                        SmallButton("Run Now", prominent: !isNext) { run(early: false) }
+                            .help("An extra run; the \(Formatting.clock(mark.start)) run stays")
+                    }
+                }
+                .padding(12)
+            }
+    }
+
+    @ViewBuilder private var buttons: some View {
+        if isNext {
+            Button("Run Now, Instead of \(Formatting.clock(mark.start))") { run(early: true) }
+        }
+        Button("Run Now") { run(early: false) }
+    }
+
+    private func run(early: Bool) {
+        asking = false
+        guard let job = model.job(mark.jobID) else { return }
+        Task { await model.runNow(job, early: early) }
     }
 }
 
@@ -410,6 +472,16 @@ struct RunLogView: View {
                         detail(job.job.kind == .shell ? "Command" : "Prompt", (job.job.kind == .shell ? job.job.command : job.job.prompt) ?? "",
                                mono: job.job.kind == .shell)
                         detail("Folder", JobGroups.tilde(job.job.dir))
+                    }
+                    if let usage = run.usage {
+                        detail("Tokens", RunText.tokens(usage))
+                    }
+                    if let session = run.sessionId, job?.job.kind == .claude {
+                        HStack(alignment: .center, spacing: 8) {
+                            Text("Session").font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 72, alignment: .leading)
+                            CopyLine(text: "claude --resume \(session)")
+                                .help("Open this session again in Claude Code, in the job's folder")
+                        }
                     }
                 }
             }

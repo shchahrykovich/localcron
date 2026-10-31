@@ -4,6 +4,8 @@
 use chrono::{DateTime, FixedOffset};
 use serde::{Deserialize, Serialize};
 
+use crate::usage::Usage;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Trigger {
@@ -75,4 +77,12 @@ pub struct Run {
     /// claude job runs in one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub console: Option<String>,
+    /// The agent's own session: the Claude Code session id (`claude
+    /// --resume <id>` opens it), or the id of the Codex rollout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    /// The tokens a claude or codex run used, read from its session file
+    /// when it ended. None for a shell run, or when the file was not found.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<Usage>,
 }

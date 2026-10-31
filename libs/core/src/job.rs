@@ -178,12 +178,17 @@ impl Job {
     }
 
     /// The program and its arguments. `shell` is the user's login shell.
-    pub fn argv(&self, shell: &str) -> (String, Vec<String>) {
+    /// `session`: the id a claude run gets for its session (`--session-id`),
+    /// so its transcript, and the tokens it used, can be found after it.
+    pub fn argv(&self, shell: &str, session: Option<&str>) -> (String, Vec<String>) {
         let prompt = self.prompt.clone().unwrap_or_default();
         match self.kind {
             JobKind::Shell => (shell.to_string(), vec!["-c".into(), self.command.clone().unwrap_or_default()]),
             JobKind::Claude => {
                 let mut args = vec!["-p".to_string()];
+                if let Some(id) = session {
+                    args.extend(["--session-id".into(), id.to_string()]);
+                }
                 if let Some(model) = &self.model {
                     args.extend(["--model".into(), model.clone()]);
                 }
@@ -210,8 +215,11 @@ impl Job {
     /// the same options, no AskUserQuestion (nobody may answer), and hooks
     /// that append `prompt` (the agent started) and `stop` (it finished its
     /// answer) to the file in `$LOCALCRON_EVENTS`.
-    pub fn console_argv(&self) -> Vec<String> {
+    pub fn console_argv(&self, session: Option<&str>) -> Vec<String> {
         let mut args = vec!["claude".to_string()];
+        if let Some(id) = session {
+            args.extend(["--session-id".into(), id.to_string()]);
+        }
         if let Some(model) = &self.model {
             args.extend(["--model".into(), model.clone()]);
         }
@@ -229,7 +237,7 @@ impl Job {
     /// One line for the run header of a console run: without the hook
     /// settings, which say nothing to a person.
     pub fn console_command_line(&self) -> String {
-        let args = self.console_argv();
+        let args = self.console_argv(None);
         let mut shown = Vec::new();
         let mut skip = false;
         for a in &args {
@@ -264,9 +272,17 @@ impl Job {
         .to_string()
     }
 
+    /// A claude run may get its own session id: not when its own arguments
+    /// already choose a session (`--resume`, `--continue`, `--session-id`).
+    pub fn names_its_session(&self) -> bool {
+        const TAKEN: [&str; 6] = ["--session-id", "--resume", "-r", "--continue", "-c", "--fork-session"];
+        self.kind == JobKind::Claude
+            && !self.args.iter().any(|a| TAKEN.contains(&a.as_str()) || TAKEN.iter().any(|t| a.starts_with(&format!("{t}="))))
+    }
+
     /// One line for logs and the run header.
     pub fn command_line(&self, shell: &str) -> String {
-        let (program, args) = self.argv(shell);
+        let (program, args) = self.argv(shell, None);
         std::iter::once(program).chain(args.into_iter().map(|a| quote(&a))).collect::<Vec<_>>().join(" ")
     }
 }
@@ -318,7 +334,7 @@ mod tests {
 
     #[test]
     fn claude_argv_puts_the_prompt_last() {
-        let (program, args) = claude_job().argv("/bin/zsh");
+        let (program, args) = claude_job().argv("/bin/zsh", None);
         assert_eq!(program, "claude");
         assert_eq!(
             args,
@@ -327,15 +343,29 @@ mod tests {
     }
 
     #[test]
+    fn a_claude_run_gets_its_session_id_unless_its_arguments_choose_one() {
+        let job = claude_job();
+        assert!(job.names_its_session());
+        assert_eq!(&job.argv("/bin/zsh", Some("abc")).1[..3], ["-p", "--session-id", "abc"]);
+        assert_eq!(&job.console_argv(Some("abc"))[..3], ["claude", "--session-id", "abc"]);
+        assert!(!job.command_line("/bin/zsh").contains("--session-id"), "the run header has no session id");
+        for args in [vec!["--continue"], vec!["-r", "x"], vec!["--resume=x"], vec!["--session-id", "y"]] {
+            let job = Job { args: args.iter().map(|a| a.to_string()).collect(), ..claude_job() };
+            assert!(!job.names_its_session(), "{args:?}");
+        }
+        assert!(!Job { kind: JobKind::Codex, ..claude_job() }.names_its_session());
+    }
+
+    #[test]
     fn codex_and_shell_argv() {
         let mut job = claude_job();
         job.kind = JobKind::Codex;
         job.permission_mode = None;
         job.args = vec!["--full-auto".into()];
-        assert_eq!(job.argv("/bin/zsh").1, ["exec", "--model", "sonnet", "--full-auto", "Review open PRs"]);
+        assert_eq!(job.argv("/bin/zsh", None).1, ["exec", "--model", "sonnet", "--full-auto", "Review open PRs"]);
 
         let shell = Job { kind: JobKind::Shell, command: Some("make test".into()), prompt: None, model: None, permission_mode: None, args: vec![], ..claude_job() };
-        assert_eq!(shell.argv("/bin/zsh"), ("/bin/zsh".to_string(), vec!["-c".to_string(), "make test".to_string()]));
+        assert_eq!(shell.argv("/bin/zsh", None), ("/bin/zsh".to_string(), vec!["-c".to_string(), "make test".to_string()]));
         assert!(shell.validate().is_ok());
         assert_eq!(shell.command_line("/bin/zsh"), "/bin/zsh -c 'make test'");
     }
@@ -423,7 +453,7 @@ mod tests {
 
     #[test]
     fn the_console_runs_claude_without_print_and_with_hooks() {
-        let args = claude_job().console_argv();
+        let args = claude_job().console_argv(None);
         assert_eq!(&args[..5], ["claude", "--model", "sonnet", "--permission-mode", "acceptEdits"]);
         assert!(!args.contains(&"-p".to_string()));
         assert_eq!(args.last().unwrap(), "Review open PRs", "the prompt is last");

@@ -3,6 +3,6 @@
   "method": "hello",
   "params": {
     "client": "menubar",
-    "api_version": "1.4"
+    "api_version": "1.5"
   }
 }

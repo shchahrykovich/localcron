@@ -61,6 +61,12 @@ LocalCron.app (Swift) ───────────────────�
   `MAX_RUNS` runs are kept. A job's `icon` is an SVG that `icon::clean_svg`
   (core) cleans of scripts and links in `set_job`; a replace without an icon
   keeps the old one, `""` removes it.
+  Tokens: a claude run gets `--session-id <uuid>` (not when its `args`
+  choose a session); when a claude or codex run ends, `usage.rs` finds its
+  session file (`~/.claude/projects/*/<uuid>.jsonl` with subagents, or the
+  Codex rollout in the job's folder that began during the run) and
+  `core::usage` sums it into `Run.usage`. At start a thread does the same
+  for older runs (claude ones by time and first prompt).
 - Secrets (`libs/core/src/secret.rs`, `apps/daemon/src/secrets.rs`): a job's
   `secret_env` maps a variable to a secret name. Only the daemon writes and
   reads the values, in the login keychain (service `<bundle id>.secrets`),

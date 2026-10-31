@@ -311,6 +311,9 @@ struct JobMenu: View {
         }
         Divider()
         Button("Show Runs") { model.showRuns(jobID: job.id) }
+        if job.job.kind != .shell {
+            Button("Show Token Usage") { model.showUsage(jobID: job.id) }
+        }
         if let run = job.activeRun ?? job.lastRun {
             Button("Show Log") { model.showLog(run) }
             Button("Reveal Log in Finder") { model.revealLog(run) }

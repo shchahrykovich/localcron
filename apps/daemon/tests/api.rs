@@ -843,3 +843,68 @@ fn a_console_left_from_a_lost_run_is_replaced() {
     let log = d.ok("get_run_log", json!({"run_id": run}))["text"].as_str().unwrap().to_string();
     assert!(log.contains("fake claude working"), "{log}");
 }
+
+/// Stand-ins for Claude Code and Codex that write their session files, as
+/// the real ones do, under $HOME.
+const FAKE_CLAUDE_SESSION: &str = r#"#!/bin/sh
+id=""; prev=""
+for a in "$@"; do [ "$prev" = "--session-id" ] && id="$a"; prev="$a"; done
+[ -n "$id" ] || { echo "no session id"; exit 1; }
+mkdir -p "$HOME/.claude/projects/some-folder"
+f="$HOME/.claude/projects/some-folder/$id.jsonl"
+echo '{"type":"assistant","requestId":"r1","message":{"id":"m1","model":"claude-opus-5-5","usage":{"input_tokens":3,"cache_creation_input_tokens":200,"cache_read_input_tokens":0,"output_tokens":10}}}' > "$f"
+echo '{"type":"assistant","requestId":"r2","message":{"id":"m2","model":"claude-opus-5-5","usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":200,"output_tokens":40}}}' >> "$f"
+echo done
+"#;
+
+const FAKE_CODEX: &str = r#"#!/bin/sh
+d="$HOME/.codex/sessions/$(date +%Y/%m/%d)"
+mkdir -p "$d"
+f="$d/rollout-test.jsonl"
+echo "{\"type\":\"session_meta\",\"payload\":{\"id\":\"codex-1\",\"cwd\":\"$(pwd)\",\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}}" > "$f"
+echo '{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":900,"output_tokens":70}}}}' >> "$f"
+echo done
+"#;
+
+fn agent_daemon() -> Daemon {
+    let home = tempfile::Builder::new().prefix("lc").tempdir_in("/tmp").unwrap();
+    let bin = home.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    for (name, script) in [("claude", FAKE_CLAUDE_SESSION), ("codex", FAKE_CODEX)] {
+        std::fs::write(bin.join(name), script).unwrap();
+        std::process::Command::new("chmod").arg("+x").arg(bin.join(name)).status().unwrap();
+    }
+    // No tmux in this PATH: claude runs with -p.
+    let path = format!("{}:/usr/bin:/bin", bin.display());
+    Daemon::start_env(home, false, &[("LOCALCRON_PATH", path)])
+}
+
+#[test]
+fn a_claude_run_gets_a_session_id_and_the_tokens_of_its_session() {
+    let d = agent_daemon();
+    d.ok("set_job", json!({"job": {"id": "review", "schedule": "@daily", "kind": "claude", "prompt": "review", "dir": d.dir()}}));
+    let run = d.ok("run_job", json!({"id": "review"}))["run"]["id"].as_str().unwrap().to_string();
+    let done = d.wait_status(&run, "succeeded");
+    let session = done["session_id"].as_str().unwrap();
+    assert_eq!(session.len(), 36, "{done}");
+    assert_eq!(
+        done["usage"],
+        json!({"input_tokens": 4, "cache_write_tokens": 200, "cache_read_tokens": 200, "output_tokens": 50, "requests": 2,
+               "models": ["claude-opus-5-5"]})
+    );
+    let log = d.ok("get_run_log", json!({"run_id": run}))["text"].as_str().unwrap().to_string();
+    assert!(log.contains("done") && !log.contains("no session id"), "{log}");
+    assert!(!log.lines().take(4).any(|l| l.contains("--session-id")), "the header has no session id: {log}");
+}
+
+#[test]
+fn a_codex_run_gets_the_tokens_of_its_rollout() {
+    let d = agent_daemon();
+    d.ok("set_job", json!({"job": {"id": "fix", "schedule": "@daily", "kind": "codex", "prompt": "fix", "dir": d.dir()}}));
+    let run = d.ok("run_job", json!({"id": "fix"}))["run"]["id"].as_str().unwrap().to_string();
+    let done = d.wait_status(&run, "succeeded");
+    assert_eq!(done["session_id"], "codex-1", "{done}");
+    assert_eq!(done["usage"]["input_tokens"], 100);
+    assert_eq!(done["usage"]["cache_read_tokens"], 900);
+    assert_eq!(done["usage"]["output_tokens"], 70);
+}

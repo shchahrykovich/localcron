@@ -39,6 +39,7 @@ use crate::log;
 use crate::peer::{AppCheck, Trust};
 use crate::secrets::{Keychain, ReadError};
 use crate::shellenv::ShellEnvCache;
+use crate::usage;
 use crate::store::{self, Grant, JobsFile, RunsFile, SecretEntry, SecretsFile};
 
 pub const DAEMON_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -323,6 +324,8 @@ impl Engine {
             log_bytes: None,
             message: String::new(),
             console: None,
+            session_id: None,
+            usage: None,
         };
         if let Some(busy) = st.runs.iter().find(|r| r.job_id == job_id && !r.status.is_finished()) {
             run.status = RunStatus::Skipped;
@@ -415,10 +418,13 @@ impl Engine {
             if let Err(e) = scrub_file(log_path, &values) {
                 log!("run {run_id}: cannot hide the secrets in its log: {e}");
             }
+            self.measure(run_id, job);
             return self.finish(run_id, code, message);
         }
 
-        let (program, args) = job.argv(&env.shell);
+        // A new id also after a console that did not start: that session may exist.
+        let session = job.names_its_session().then(usage::new_session_id);
+        let (program, args) = job.argv(&env.shell, session.as_deref());
         let (Ok(out), Ok(err)) = (file.try_clone(), file.try_clone()) else {
             return self.finish(run_id, None, "cannot share the log file with the process".into());
         };
@@ -452,6 +458,7 @@ impl Engine {
             }
             if let Some(run) = st.runs.iter_mut().find(|r| r.id == run_id) {
                 run.pid = Some(pid);
+                run.session_id = session;
             }
             self.save_runs(&st);
         }
@@ -470,7 +477,68 @@ impl Engine {
             Err(e) => format!("cannot wait for the process: {e}"),
         };
         let code = status.ok().and_then(|s| s.code());
+        self.measure(run_id, job);
         self.finish(run_id, code, message);
+    }
+
+    /// Read the tokens the run used from the agent's session file, without
+    /// the state lock: the file may be large.
+    fn measure(&self, run_id: &str, job: &Job) {
+        let (session, started, taken) = {
+            let st = self.lock();
+            let Some(run) = st.runs.iter().find(|r| r.id == run_id) else { return };
+            let taken: std::collections::HashSet<String> =
+                st.runs.iter().filter(|r| r.id != run_id).filter_map(|r| r.session_id.clone()).collect();
+            (run.session_id.clone(), run.started_at, taken)
+        };
+        let Some(found) = find_usage(job, session, started, Some(now()), &taken) else { return };
+        let mut st = self.lock();
+        if let Some(run) = st.runs.iter_mut().find(|r| r.id == run_id) {
+            run.session_id = Some(found.0);
+            run.usage = Some(found.1);
+        }
+    }
+
+    /// The tokens of finished claude and codex runs that have none yet: runs
+    /// from before LocalCron read them, and runs that ended while the daemon
+    /// stopped. On a thread of its own after `load`.
+    pub fn measure_old_runs(&self) {
+        let (todo, mut taken) = {
+            let st = self.lock();
+            let taken: std::collections::HashSet<String> = st.runs.iter().filter_map(|r| r.session_id.clone()).collect();
+            let todo: Vec<(String, Job, Option<String>, _, _)> = st
+                .runs
+                .iter()
+                .filter(|r| r.status.is_finished() && r.usage.is_none() && r.started_at.is_some())
+                .filter_map(|r| {
+                    let job = &st.jobs.get(&r.job_id)?.job;
+                    (job.kind != JobKind::Shell).then(|| (r.id.clone(), job.clone(), r.session_id.clone(), r.started_at, r.ended_at))
+                })
+                .collect();
+            (todo, taken)
+        };
+        let mut found = Vec::new();
+        for (run_id, job, session, started, ended) in todo {
+            if let Some((id, usage)) = find_usage(&job, session, started, ended, &taken) {
+                taken.insert(id.clone());
+                found.push((run_id, id, usage));
+            }
+        }
+        if found.is_empty() {
+            return;
+        }
+        let mut st = self.lock();
+        let count = found.len();
+        for (run_id, id, usage) in found {
+            if let Some(run) = st.runs.iter_mut().find(|r| r.id == run_id && r.usage.is_none()) {
+                run.session_id = Some(id);
+                run.usage = Some(usage);
+            }
+        }
+        self.save_runs(&st);
+        drop(st);
+        log!("read the tokens of {count} earlier runs");
+        self.notify();
     }
 
     /// A claude job in a tmux console (see console.rs). None when claude did
@@ -490,7 +558,8 @@ impl Engine {
         let _ = fs::remove_file(&events);
         let mut env = run_env.to_vec();
         env.push(("LOCALCRON_EVENTS".into(), events.clone().into()));
-        if let Err(e) = console.start(&job.console_argv(), &job.dir, &env) {
+        let session = job.names_its_session().then(usage::new_session_id);
+        if let Err(e) = console.start(&job.console_argv(session.as_deref()), &job.dir, &env) {
             let _ = writeln!(file, "# no console: {e}\n");
             return None;
         }
@@ -504,6 +573,7 @@ impl Engine {
             if let Some(run) = st.runs.iter_mut().find(|r| r.id == run_id) {
                 run.pid = pid;
                 run.console = Some(attach.clone());
+                run.session_id = session;
             }
             self.save_runs(&st);
         }
@@ -1246,6 +1316,30 @@ fn next_free(runs: &[Run], job_id: &str, schedule: &Schedule, now: DateTime<Loca
 
 /// A SIGTERM time so old that the scheduler sends SIGKILL at its next look.
 /// The size of a file; 0 when it is gone.
+/// The session and tokens of a claude or codex run. A claude run without a
+/// session id is found by its time and prompt.
+fn find_usage(
+    job: &Job,
+    session: Option<String>,
+    started: Option<DateTime<FixedOffset>>,
+    ended: Option<DateTime<FixedOffset>>,
+    taken: &std::collections::HashSet<String>,
+) -> Option<(String, localcron_core::usage::Usage)> {
+    match job.kind {
+        JobKind::Shell => None,
+        JobKind::Claude => {
+            let home = usage::claude_home(job);
+            let session = match session {
+                Some(id) => id,
+                None => usage::find_claude_session(&home, job, started?, ended?, taken)?,
+            };
+            let found = usage::claude_session(&home, &job.dir, &session)?;
+            Some((session, found))
+        }
+        JobKind::Codex => usage::codex_run(&usage::codex_home(job), &job.dir, started?, ended?, taken),
+    }
+}
+
 fn file_size(path: &str) -> u64 {
     fs::metadata(path).map_or(0, |m| m.len())
 }

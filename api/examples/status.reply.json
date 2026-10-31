@@ -1,7 +1,7 @@
 {
   "id": 1,
   "result": {
-    "api_version": "1.4",
+    "api_version": "1.5",
     "daemon_version": "0.1.0",
     "data_dir": "/Users/me/Library/Application Support/LocalCron",
     "enabled_jobs": 1,

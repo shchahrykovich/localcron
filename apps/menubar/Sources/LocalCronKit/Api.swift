@@ -7,7 +7,7 @@
 
 import Foundation
 
-public let apiVersion = "1.4"
+public let apiVersion = "1.5"
 
 public func apiMajor(_ version: String) -> Int? {
     version.split(separator: ".").first.flatMap { Int($0) }
@@ -305,6 +305,64 @@ public enum RunStatus: String, Codable, Sendable {
     }
 }
 
+/// The tokens of one agent run (libs/core/src/usage.rs).
+public struct TokenUsage: Codable, Equatable, Sendable {
+    /// Input the model read new, not from the cache.
+    public var inputTokens: UInt64
+    public var cacheWriteTokens: UInt64
+    /// Input read from the cache: much cheaper than new input.
+    public var cacheReadTokens: UInt64
+    public var outputTokens: UInt64
+    public var requests: UInt64
+    public var models: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case requests, models
+        case inputTokens = "input_tokens"
+        case cacheWriteTokens = "cache_write_tokens"
+        case cacheReadTokens = "cache_read_tokens"
+        case outputTokens = "output_tokens"
+    }
+
+    public init(inputTokens: UInt64 = 0, cacheWriteTokens: UInt64 = 0, cacheReadTokens: UInt64 = 0, outputTokens: UInt64 = 0,
+                requests: UInt64 = 0, models: [String] = []) {
+        self.inputTokens = inputTokens
+        self.cacheWriteTokens = cacheWriteTokens
+        self.cacheReadTokens = cacheReadTokens
+        self.outputTokens = outputTokens
+        self.requests = requests
+        self.models = models
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        inputTokens = try c.decode(UInt64.self, forKey: .inputTokens)
+        cacheWriteTokens = try c.decodeIfPresent(UInt64.self, forKey: .cacheWriteTokens) ?? 0
+        cacheReadTokens = try c.decodeIfPresent(UInt64.self, forKey: .cacheReadTokens) ?? 0
+        outputTokens = try c.decode(UInt64.self, forKey: .outputTokens)
+        requests = try c.decodeIfPresent(UInt64.self, forKey: .requests) ?? 0
+        models = try c.decodeIfPresent([String].self, forKey: .models) ?? []
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(inputTokens, forKey: .inputTokens)
+        try c.encode(cacheWriteTokens, forKey: .cacheWriteTokens)
+        try c.encode(cacheReadTokens, forKey: .cacheReadTokens)
+        try c.encode(outputTokens, forKey: .outputTokens)
+        try c.encode(requests, forKey: .requests)
+        if !models.isEmpty { try c.encode(models, forKey: .models) }
+    }
+
+    public var total: UInt64 { inputTokens + cacheWriteTokens + cacheReadTokens + outputTokens }
+
+    public static func + (a: TokenUsage, b: TokenUsage) -> TokenUsage {
+        TokenUsage(inputTokens: a.inputTokens + b.inputTokens, cacheWriteTokens: a.cacheWriteTokens + b.cacheWriteTokens,
+                   cacheReadTokens: a.cacheReadTokens + b.cacheReadTokens, outputTokens: a.outputTokens + b.outputTokens,
+                   requests: a.requests + b.requests, models: a.models + b.models.filter { !a.models.contains($0) })
+    }
+}
+
 public struct Run: Codable, Equatable, Sendable, Identifiable {
     /// `<job id>.<number>`.
     public var id: String
@@ -325,10 +383,15 @@ public struct Run: Codable, Equatable, Sendable, Identifiable {
     /// The command that opens the run's interactive console (tmux), while a
     /// claude job runs in one.
     public var console: String?
+    /// The Claude Code session id (`claude --resume <id>`), or the Codex rollout id.
+    public var sessionId: String?
+    /// The tokens a claude or codex run used.
+    public var usage: TokenUsage?
 
     enum CodingKeys: String, CodingKey {
-        case id, trigger, status, pid, log, message, console
+        case id, trigger, status, pid, log, message, console, usage
         case jobId = "job_id"
+        case sessionId = "session_id"
         case dueAt = "due_at"
         case queuedAt = "queued_at"
         case startedAt = "started_at"
@@ -339,7 +402,10 @@ public struct Run: Codable, Equatable, Sendable, Identifiable {
 
     public init(id: String, jobId: String, trigger: Trigger, status: RunStatus, dueAt: String? = nil, queuedAt: String,
                 startedAt: String? = nil, endedAt: String? = nil, exitCode: Int32? = nil, pid: UInt32? = nil,
-                log: String? = nil, logBytes: UInt64? = nil, message: String = "", console: String? = nil) {
+                log: String? = nil, logBytes: UInt64? = nil, message: String = "", console: String? = nil,
+                sessionId: String? = nil, usage: TokenUsage? = nil) {
+        self.sessionId = sessionId
+        self.usage = usage
         self.id = id
         self.jobId = jobId
         self.trigger = trigger
@@ -367,6 +433,8 @@ public struct Run: Codable, Equatable, Sendable, Identifiable {
         startedAt = try c.decodeIfPresent(String.self, forKey: .startedAt)
         endedAt = try c.decodeIfPresent(String.self, forKey: .endedAt)
         exitCode = try c.decodeIfPresent(Int32.self, forKey: .exitCode)
+        sessionId = try c.decodeIfPresent(String.self, forKey: .sessionId)
+        usage = try c.decodeIfPresent(TokenUsage.self, forKey: .usage)
         pid = try c.decodeIfPresent(UInt32.self, forKey: .pid)
         log = try c.decodeIfPresent(String.self, forKey: .log)
         logBytes = try c.decodeIfPresent(UInt64.self, forKey: .logBytes)
@@ -390,6 +458,8 @@ public struct Run: Codable, Equatable, Sendable, Identifiable {
         try c.encodeIfPresent(logBytes, forKey: .logBytes)
         if !message.isEmpty { try c.encode(message, forKey: .message) }
         try c.encodeIfPresent(console, forKey: .console)
+        try c.encodeIfPresent(sessionId, forKey: .sessionId)
+        try c.encodeIfPresent(usage, forKey: .usage)
     }
 }
 

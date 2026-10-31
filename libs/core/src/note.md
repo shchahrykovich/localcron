@@ -111,6 +111,8 @@ nobody there.
   previous one is still queued or running is skipped.
 - A run is stopped after `timeout_secs` (default 3600).
 - Output goes to a log file per run. Read it with `get_run_log`.
+- A `claude` or `codex` run in `list_runs` has `usage`: the tokens it used
+  (new input, cache write, cache read, output) and its `session_id`.
 - With tmux installed, a `claude` run works in a console the user can open
   and type into (`{{CLI}} attach JOB`, or `tmux -L {{CLI}}-JOB attach`
   without {{APP}}, or Open Terminal in the app). Its

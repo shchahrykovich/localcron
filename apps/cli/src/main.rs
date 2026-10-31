@@ -709,7 +709,10 @@ fn print_run_line(run: &Run) {
     };
     let code = run.exit_code.map_or(String::new(), |c| format!(" exit {c}"));
     let console = if run.console.is_some() { " (console: attach)" } else { "" };
-    println!("{:<30} {:<10} {started}{took}{code}{}{console}", run.id, status_word(run.status), message_part(run));
+    let tokens = run.usage.as_ref().map_or(String::new(), |u| {
+        format!(" {} tokens ({} out)", localcron_core::usage::short(u.total()), localcron_core::usage::short(u.output_tokens))
+    });
+    println!("{:<30} {:<10} {started}{took}{code}{tokens}{}{console}", run.id, status_word(run.status), message_part(run));
 }
 
 #[cfg(test)]

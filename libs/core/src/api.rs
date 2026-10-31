@@ -14,7 +14,7 @@ use crate::job::Job;
 use crate::run::Run;
 
 /// Major.minor. A client stops when the major number differs.
-pub const API_VERSION: &str = "1.4";
+pub const API_VERSION: &str = "1.5";
 
 pub fn api_major(version: &str) -> Option<u32> {
     version.split('.').next()?.parse().ok()

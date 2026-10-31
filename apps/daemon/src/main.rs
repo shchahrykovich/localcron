@@ -11,6 +11,7 @@ mod secrets;
 mod shellenv;
 mod socket;
 mod store;
+mod usage;
 
 use std::os::fd::AsRawFd;
 use std::process::ExitCode;
@@ -85,6 +86,8 @@ fn main() -> ExitCode {
     std::thread::Builder::new().name("socket".into()).spawn(move || socket::serve(e, listener)).expect("socket thread");
     let e = Arc::clone(&engine);
     let scheduler = std::thread::Builder::new().name("scheduler".into()).spawn(move || e.run_scheduler()).expect("scheduler thread");
+    let e = Arc::clone(&engine);
+    let _ = std::thread::Builder::new().name("old-runs".into()).spawn(move || e.measure_old_runs());
 
     let mut received = 0;
     // SAFETY: `signals` is an initialized set; `received` is a valid out pointer.

@@ -22,9 +22,9 @@ final class AppModel {
         case jobs = "Jobs", runs = "Runs", secrets = "Secrets"
     }
 
-    /// The Runs tab as a list or as a month.
+    /// The Runs tab as a list, as a month, or as the tokens agents used.
     enum RunsMode: String, CaseIterable, Hashable {
-        case list = "List", calendar = "Calendar"
+        case list = "List", calendar = "Calendar", usage = "Usage"
     }
 
     /// What the window shows in place of the tabs.
@@ -66,6 +66,10 @@ final class AppModel {
     private var plannedAt = Date.distantPast
     /// Many more runs than `runs`, for the calendars. Loaded while one is shown.
     var history: [Run] = []
+    /// The Usage view: how far back, which tokens, and one job or all.
+    var usagePeriod: UsagePeriod = .month
+    var usageMetric: TokenMetric = .all
+    var usageJob: String?
     /// The menu bar icon (Settings, General).
     var iconStyle = IconStyle.saved(UserDefaults.standard.string(forKey: IconStyle.defaultsKey)) {
         didSet { UserDefaults.standard.set(iconStyle.rawValue, forKey: IconStyle.defaultsKey) }
@@ -458,6 +462,20 @@ final class AppModel {
         runsMode = .list
         runFilter = .all
         runJobFilter = jobID
+    }
+
+    /// The tokens of one job, or of all with nil.
+    func showUsage(jobID: String?) {
+        page = .tabs
+        tab = .runs
+        runsMode = .usage
+        usageJob = jobID
+    }
+
+    /// The history, with the newest runs from the last poll.
+    var allRuns: [Run] {
+        let fresh = Set(runs.map(\.id))
+        return runs + history.filter { !fresh.contains($0.id) }
     }
 
     func job(_ id: String) -> JobView? { jobs.first { $0.id == id } }

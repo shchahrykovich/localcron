@@ -193,7 +193,12 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
                 menu.addItem(menuItem(entry))
             case let .submenu(title, symbol, detail, children):
                 let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-                if let symbol { item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) }
+                // A job's submenu shows the job's icon.
+                if let job = model.job(title) {
+                    item.image = JobGlyph.menuImage(job.job)
+                } else if let symbol {
+                    item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+                }
                 if let detail { setDetail(item, detail) }
                 item.submenu = makeMenu(children)
                 menu.addItem(item)
@@ -206,7 +211,12 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         let item = NSMenuItem(title: entry.title, action: #selector(menuAction(_:)), keyEquivalent: entry.shortcut ?? "")
         item.target = self
         item.representedObject = entry.action
-        if let symbol = entry.symbol { item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) }
+        if let symbol = entry.symbol {
+            item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        } else if case let .runNow(jobID) = entry.action, let job = model.job(jobID) {
+            // An entry of Run a Job Now.
+            item.image = JobGlyph.menuImage(job.job)
+        }
         if entry.checked { item.state = .on }
         if entry.emphasized {
             item.attributedTitle = NSAttributedString(string: entry.title, attributes: [.font: NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)])

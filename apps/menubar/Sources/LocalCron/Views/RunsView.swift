@@ -208,12 +208,22 @@ struct MonthCalendarView: View {
             selected = cal.startOfDay(for: day.date)
         } label: {
             VStack(alignment: .leading, spacing: 0) {
-                Text("\(day.number)")
-                    .font(.system(size: 11, weight: isToday || isSelected ? .semibold : .regular).monospacedDigit())
-                    .foregroundStyle(isToday ? Color.white : day.outside ? Color.secondary.opacity(0.6) : .primary)
-                    .frame(minWidth: 16, minHeight: 16)
-                    .padding(.horizontal, 2)
-                    .background(isToday ? Theme.accentFill : .clear, in: Capsule())
+                HStack(spacing: 2) {
+                    Text("\(day.number)")
+                        .font(.system(size: 11, weight: isToday || isSelected ? .semibold : .regular).monospacedDigit())
+                        .foregroundStyle(isToday ? Color.white : day.outside ? Color.secondary.opacity(0.6) : .primary)
+                        .frame(minWidth: 16, minHeight: 16)
+                        .padding(.horizontal, 2)
+                        .background(isToday ? Theme.accentFill : .clear, in: Capsule())
+                    Spacer(minLength: 0)
+                    // The runs that ran; planned ones are not counted.
+                    let done = marks.filter { $0.mark != .planned }.count
+                    if done > 0 {
+                        Text("\(done)")
+                            .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                            .foregroundStyle(failed > 0 ? Theme.dangerText : .secondary)
+                    }
+                }
                 Spacer(minLength: 0)
                 GeometryReader { geo in
                     HStack(spacing: 1) {
@@ -262,11 +272,25 @@ struct DayLanes: View {
                 } else {
                     ForEach(jobs, id: \.self) { job in
                         HStack(spacing: 8) {
-                            Text(job).font(.system(size: 11)).lineLimit(1).frame(width: 104, alignment: .leading)
+                            HStack(spacing: 4) {
+                                if let view = model.job(job) {
+                                    JobGlyph(job: view.job, size: 12).foregroundStyle(.secondary)
+                                }
+                                Text(job).font(.system(size: 11)).lineLimit(1).truncationMode(.tail)
+                            }
+                            .frame(width: 104, alignment: .leading)
+                            .help(job)
+                            let jobMarks = marks.filter { $0.jobID == job }
                             GeometryReader { geo in
-                                lane(marks.filter { $0.jobID == job }, width: geo.size.width, now: isToday)
+                                lane(jobMarks, width: geo.size.width, now: isToday)
                             }
                             .frame(height: 18)
+                            let done = jobMarks.filter { $0.mark != .planned }.count
+                            Text(done > 0 ? "\(done)" : "")
+                                .font(.system(size: 11, weight: .medium).monospacedDigit())
+                                .foregroundStyle(jobMarks.contains { $0.mark.isProblem } ? Theme.dangerText : .secondary)
+                                .frame(width: 18, alignment: .trailing)
+                                .help(RunGroups.count(done))
                         }
                     }
                     HStack(spacing: 0) {
@@ -276,6 +300,7 @@ struct DayLanes: View {
                     }
                     .font(.system(size: 10).monospacedDigit()).foregroundStyle(.secondary)
                     .padding(.leading, 112)
+                    .padding(.trailing, 26)
                 }
             }
             .padding(.horizontal, 12)

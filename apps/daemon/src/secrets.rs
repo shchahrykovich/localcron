@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use std::sync::Once;
 
 use security_framework::base::Error;
-use security_framework::os::macos::keychain::{CreateOptions, SecKeychain};
+use security_framework::os::macos::keychain::SecKeychain;
 use security_framework::os::macos::passwords::find_generic_password;
 
 use localcron_core::instance::Instance;
@@ -132,6 +132,8 @@ fn describe_code(code: i32) -> Option<String> {
 /// Create the file on first use, unlock it after.
 #[cfg(any(test, debug_assertions))]
 fn open_test_keychain(path: &std::path::Path) -> Result<SecKeychain, Error> {
+    // Here, not at the top: a release build has no test keychain.
+    use security_framework::os::macos::keychain::CreateOptions;
     if !path.exists() {
         return CreateOptions::new().password(TEST_PASSWORD).create(path);
     }

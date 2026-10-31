@@ -418,6 +418,24 @@ struct JobGlyph: View {
         }
     }
 
+    /// The icon as an image for a menu item, `size` points on its longer
+    /// side. A template unless the job keeps its own colors.
+    static func menuImage(_ job: Job, size: CGFloat = 16) -> NSImage? {
+        let source: NSImage
+        if let svg = job.icon, let svgImage = SVGImage.image(svg), let copy = svgImage.copy() as? NSImage {
+            source = copy
+            source.isTemplate = !job.iconColors
+        } else if let symbol = NSImage(systemSymbolName: Self.symbol(job.kind), accessibilityDescription: nil) {
+            source = symbol
+            source.isTemplate = true
+        } else {
+            return nil
+        }
+        let scale = size / max(source.size.width, source.size.height, 1)
+        source.size = NSSize(width: source.size.width * scale, height: source.size.height * scale)
+        return source
+    }
+
     static func symbol(_ kind: JobKind) -> String {
         switch kind {
         case .claude: "sparkle"

@@ -81,7 +81,13 @@ struct WeekView: View {
             Spacer()
             Picker("Show jobs", selection: $jobFilter) {
                 Text("All jobs").tag("")
-                ForEach(Array(Set(model.jobs.map(\.id) + model.history.map(\.jobId))).sorted(), id: \.self) { Text($0).tag($0) }
+                ForEach(Array(Set(model.jobs.map(\.id) + model.history.map(\.jobId))).sorted(), id: \.self) { id in
+                    if let job = model.job(id), let image = JobGlyph.menuImage(job.job, size: 14) {
+                        Label { Text(id) } icon: { Image(nsImage: image) }.tag(id)
+                    } else {
+                        Text(id).tag(id)
+                    }
+                }
             }
             .labelsHidden()
             .fixedSize()
@@ -187,7 +193,10 @@ struct WeekView: View {
             selected = m.id
         } label: {
             VStack(alignment: .leading, spacing: 0) {
-                Text((m.mark == .failed ? "✕ " : "") + m.jobID).font(.system(size: 10.5, weight: .semibold)).lineLimit(1)
+                HStack(spacing: 3) {
+                    if let job = model.job(m.jobID) { JobGlyph(job: job.job, size: 10) }
+                    Text((m.mark == .failed ? "✕ " : "") + m.jobID).font(.system(size: 10.5, weight: .semibold)).lineLimit(1)
+                }
                 if h >= 26 {
                     Text("\(Formatting.clock(m.start)), " + (m.mark == .planned ? "planned" : took(m))).font(.system(size: 10)).lineLimit(1)
                 }
@@ -227,7 +236,10 @@ struct WeekView: View {
                 if let mark {
                     Card(padding: 12) {
                         VStack(alignment: .leading, spacing: 8) {
-                            HStack {
+                            HStack(spacing: 8) {
+                                if let job = model.job(mark.jobID) {
+                                    JobTile(job: job, showDot: false)
+                                }
                                 Text(mark.jobID).font(.system(size: 13, weight: .semibold))
                                 Spacer()
                                 Chip(text: mark.mark.title, kind: chip(mark.mark))

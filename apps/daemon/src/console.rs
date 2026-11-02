@@ -3,10 +3,27 @@
 //! Terminal in the app), watch Claude Code work and type into it.
 //!
 //! ```text
-//! run thread ─ tmux -L localcron-<run id> new-session -d ─► tmux server ─► claude "<prompt>" (interactive)
+//! run thread ─ tmux -L localcron-<job id> new-session -d ─► tmux server ─► claude "<prompt>" (interactive)
 //!     │ every 300 ms: the events file, the pane, the attached clients        │ hooks append
-//!     └──────────────────────────── events file ◄───────── "prompt" / "stop" ┘
+//!     └────────────── events file ◄── "prompt" / "stop {Stop input as JSON}" ┘
 //! ```
+//!
+//! A turn of claude ends with `stop`, but the work may not be done: claude
+//! can end a turn to wait for background tasks (subagents, background
+//! shells), and Claude Code wakes it with a new turn when one reports back:
+//!
+//! ```text
+//! prompt                                        the job's prompt
+//! stop {"background_tasks":[5 × subagent]}      waits: not finished
+//! prompt                                        <task-notification>: a subagent reported
+//! stop {"background_tasks":[]}                  finished
+//! ```
+//!
+//! `background_tasks` is a documented field of the Stop hook input (Claude
+//! Code hooks docs, "Stop input"; seen in 2.1.316). Every background task
+//! counts, not only subagents: a subagent can end its own turn and leave a
+//! background shell that wakes it later (seen on 2026-11-02), so only the
+//! shell shows that its work goes on.
 //!
 //! Each running job has its own tmux server, named after the job
 //! (`tmux -L localcron-weekly-review attach` opens it, no LocalCron needed):
@@ -14,8 +31,11 @@
 //! reaches claude as the server's environment, never on a command line. The
 //! user's ~/.tmux.conf is not read.
 //!
-//! The run ends when claude has finished its answer (`stop`) and nobody is
-//! attached, or when claude ends. When claude never starts its work (a dialog
+//! The run ends when nobody is attached and the last line is a `stop` whose
+//! `background_tasks` is empty, or when claude ends, or at `timeout_secs`. A
+//! `stop` without `background_tasks` (a Claude Code that does not send it)
+//! ends the run as before; the run log says that LocalCron could not see
+//! background agents. When claude never starts its work (a dialog
 //! such as "trust this folder?" waits, or claude ends at once), the console
 //! is closed and the run goes on without one (`claude -p`).
 
@@ -164,31 +184,255 @@ fn squeeze(text: &str) -> String {
     out.join("\n").trim_end().to_string()
 }
 
-/// What the claude hooks wrote: did it start its work, is its last answer
-/// finished.
-pub fn events(path: &Path) -> (bool, bool) {
+/// What the claude hooks wrote to the events file.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Events {
+    /// Claude started its work (a `prompt` line).
+    pub started: bool,
+    /// How many turns ended (`stop` lines), so a caller can say something
+    /// once per turn.
+    pub stops: usize,
+    pub turn: Turn,
+}
+
+/// Where claude is, from the last line of the events file.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Turn {
+    /// No turn ended yet, or a new one runs.
+    Working,
+    /// The turn ended and no background task runs: the work is done.
+    Done,
+    /// The turn ended, but background tasks run (one line for each). When
+    /// one reports back, Claude Code starts a new turn.
+    Waiting(Vec<String>),
+    /// The turn ended, and the Stop input has no `background_tasks`: this
+    /// Claude Code does not say whether background agents run.
+    DoneUnseen,
+}
+
+impl Turn {
+    pub fn finished(&self) -> bool {
+        matches!(self, Turn::Done | Turn::DoneUnseen)
+    }
+}
+
+pub fn events(path: &Path) -> Events {
     let text = std::fs::read_to_string(path).unwrap_or_default();
     let started = text.lines().any(|l| l == "prompt");
-    let finished = text.lines().next_back() == Some("stop");
-    (started, finished)
+    let stops = text.lines().filter(|l| *l == "stop" || l.starts_with("stop ")).count();
+    // The Stop hook writes its line in parts: one without its newline is
+    // still being written.
+    let turn = match text.lines().next_back() {
+        Some(line) if text.ends_with('\n') => stop_turn(line),
+        _ => Turn::Working,
+    };
+    Events { started, stops, turn }
+}
+
+/// A line of the events file: `stop` and the Stop input, or another line.
+fn stop_turn(line: &str) -> Turn {
+    let input = match line.strip_prefix("stop") {
+        Some("") => return Turn::DoneUnseen,
+        Some(rest) if rest.starts_with(' ') => rest,
+        _ => return Turn::Working,
+    };
+    let input: serde_json::Value = serde_json::from_str(input).unwrap_or_default();
+    match input.get("background_tasks").and_then(|t| t.as_array()) {
+        None => Turn::DoneUnseen,
+        Some(tasks) if tasks.is_empty() => Turn::Done,
+        Some(tasks) => Turn::Waiting(tasks.iter().map(task_line).collect()),
+    }
+}
+
+/// One background task for the run log: `subagent "Translate de nl sv"`.
+fn task_line(task: &serde_json::Value) -> String {
+    let field = |name: &str| task.get(name).and_then(|v| v.as_str()).unwrap_or("");
+    let mut description: String = field("description").chars().take(80).collect();
+    if description.len() < field("description").len() {
+        description.push('…');
+    }
+    format!("{} {description:?}", field("type"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::{Value, json};
+    use std::io::Write;
+
+    /// The command of a hook of a console run, as `Job::console_argv` writes it.
+    fn hook(event: &str) -> String {
+        let job: localcron_core::job::Job = serde_json::from_value(
+            json!({"id": "article", "schedule": "@daily", "kind": "claude", "prompt": "write the article", "dir": "/tmp"}),
+        )
+        .unwrap();
+        let args = job.console_argv(None);
+        let i = args.iter().position(|a| a == "--settings").unwrap();
+        let settings: Value = serde_json::from_str(&args[i + 1]).unwrap();
+        settings["hooks"][event][0]["hooks"][0]["command"].as_str().unwrap().to_string()
+    }
+
+    /// Run a hook as Claude Code 2.1.316 does: `sh -c`, its input on stdin.
+    fn run_hook(event: &str, events: &Path, input: &Value) {
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg(hook(event))
+            .env("LOCALCRON_EVENTS", events)
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        // A hook that does not read its input may end before it is written.
+        let _ = child.stdin.take().unwrap().write_all(input.to_string().as_bytes());
+        assert!(child.wait().unwrap().success());
+    }
+
+    /// The Stop input, in the shape Claude Code 2.1.316 sends it (captured
+    /// with a test hook on 2026-11-02). `tasks`: (type, description).
+    fn stop_input(tasks: &[(&str, &str)]) -> Value {
+        let tasks: Vec<Value> = tasks
+            .iter()
+            .enumerate()
+            .map(|(i, (kind, description))| json!({"id": format!("a{i}"), "type": kind, "status": "running", "description": description}))
+            .collect();
+        json!({
+            "session_id": "f518d2ea-3568-4cf1-9f94-a4828d379c3d",
+            "transcript_path": "/Users/u/.claude/projects/p/f518d2ea-3568-4cf1-9f94-a4828d379c3d.jsonl",
+            "cwd": "/Users/u/article",
+            "hook_event_name": "Stop",
+            "stop_hook_active": false,
+            "last_assistant_message": "I'm waiting for the 5 translation subagents to finish;\nI'll continue when they report.",
+            "background_tasks": tasks,
+            "session_crons": []
+        })
+    }
+
+    const TRANSLATIONS: [(&str, &str); 5] = [
+        ("subagent", "Translate de nl sv fi pl"),
+        ("subagent", "Translate es pt it fr ro"),
+        ("subagent", "Translate ru uk sr el tr"),
+        ("subagent", "Translate zh zh-tw ja ko vi"),
+        ("subagent", "Translate ar he hi id th"),
+    ];
+
+    /// Run weekly-wearton-article.9: the agent ended its turn to wait for 5
+    /// background subagents, and the run ended with them.
+    #[test]
+    fn a_stop_while_background_agents_run_does_not_finish_the_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("run.events");
+        run_hook("UserPromptSubmit", &path, &json!({"hook_event_name": "UserPromptSubmit", "prompt": "write the article"}));
+        run_hook("Stop", &path, &stop_input(&TRANSLATIONS));
+        let ev = events(&path);
+        assert!(ev.started);
+        assert!(!ev.turn.finished(), "5 background agents still run: {:?}", std::fs::read_to_string(&path).unwrap());
+        assert_eq!(
+            ev.turn,
+            Turn::Waiting(TRANSLATIONS.iter().map(|(kind, d)| format!("{kind} {d:?}")).collect()),
+            "the run log names them"
+        );
+    }
+
+    #[test]
+    fn a_stop_with_no_background_task_finishes_the_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("run.events");
+        run_hook("UserPromptSubmit", &path, &json!({"prompt": "write the article"}));
+        run_hook("Stop", &path, &stop_input(&[]));
+        assert_eq!(events(&path), Events { started: true, stops: 1, turn: Turn::Done });
+    }
+
+    /// The order Claude Code 2.1.316 runs the hooks in, seen with a real
+    /// session: a background agent that reports back starts a turn with
+    /// UserPromptSubmit, and that turn ends with Stop.
+    #[test]
+    fn the_run_finishes_at_the_stop_after_the_background_agents_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("run.events");
+        run_hook("UserPromptSubmit", &path, &json!({"prompt": "write the article"}));
+        run_hook("Stop", &path, &stop_input(&TRANSLATIONS));
+        assert!(!events(&path).turn.finished());
+        run_hook("UserPromptSubmit", &path, &json!({"prompt": "<task-notification>\n<task-id>a0</task-id>\n</task-notification>"}));
+        assert_eq!(events(&path).turn, Turn::Working);
+        run_hook("Stop", &path, &stop_input(&TRANSLATIONS[1..]));
+        assert!(!events(&path).turn.finished(), "4 still run");
+        run_hook("UserPromptSubmit", &path, &json!({"prompt": "<task-notification>…</task-notification>"}));
+        run_hook("Stop", &path, &stop_input(&[]));
+        assert_eq!(events(&path), Events { started: true, stops: 3, turn: Turn::Done });
+    }
+
+    /// Seen on 2026-11-02: a subagent started `sleep 25` in the background
+    /// and ended its own turn. Only the shell showed that it would go on.
+    #[test]
+    fn a_background_shell_counts_too() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("run.events");
+        run_hook("Stop", &path, &stop_input(&[("shell", "Sleep for 25 seconds in background")]));
+        assert_eq!(events(&path).turn, Turn::Waiting(vec![r#"shell "Sleep for 25 seconds in background""#.into()]));
+    }
+
+    /// A Claude Code that does not send `background_tasks`: the run ends at
+    /// the first stop, as before this field was read.
+    #[test]
+    fn a_stop_input_without_background_tasks_finishes_the_run_as_before() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("run.events");
+        run_hook("UserPromptSubmit", &path, &json!({"prompt": "write the article"}));
+        run_hook("Stop", &path, &json!({"hook_event_name": "Stop", "stop_hook_active": false}));
+        assert_eq!(events(&path), Events { started: true, stops: 1, turn: Turn::DoneUnseen });
+        assert!(events(&path).turn.finished());
+        // No input at all, or input that is not JSON.
+        std::fs::write(&path, "prompt\nstop\n").unwrap();
+        assert_eq!(events(&path).turn, Turn::DoneUnseen);
+        std::fs::write(&path, "prompt\nstop not json\n").unwrap();
+        assert_eq!(events(&path).turn, Turn::DoneUnseen);
+    }
+
+    /// Only the last line counts: what an earlier stop said is out of date.
+    #[test]
+    fn an_earlier_stop_input_is_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("run.events");
+        // Nothing ran at the first stop; the user typed more, and claude now waits.
+        run_hook("Stop", &path, &stop_input(&[]));
+        run_hook("UserPromptSubmit", &path, &json!({"prompt": "translate it too"}));
+        run_hook("Stop", &path, &stop_input(&TRANSLATIONS[..1]));
+        assert_eq!(events(&path).turn, Turn::Waiting(vec![r#"subagent "Translate de nl sv fi pl""#.into()]));
+    }
+
+    /// The Stop hook writes `stop `, the input, and the newline separately:
+    /// a read in between must not see a finished turn.
+    #[test]
+    fn a_stop_line_still_being_written_is_not_finished() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("run.events");
+        std::fs::write(&path, "prompt\nstop ").unwrap();
+        assert_eq!(events(&path).turn, Turn::Working);
+        std::fs::write(&path, "prompt\nstop {\"background_tasks\":[]}").unwrap();
+        assert_eq!(events(&path).turn, Turn::Working);
+        std::fs::write(&path, "prompt\nstop {\"background_tasks\":[]}\n").unwrap();
+        assert_eq!(events(&path).turn, Turn::Done);
+    }
 
     #[test]
     fn events_from_the_hooks() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("run.events");
-        assert_eq!(events(&path), (false, false));
+        let at = |started, stops, turn| Events { started, stops, turn };
+        assert_eq!(events(&path), at(false, 0, Turn::Working));
         std::fs::write(&path, "prompt\n").unwrap();
-        assert_eq!(events(&path), (true, false));
-        std::fs::write(&path, "prompt\nstop\n").unwrap();
-        assert_eq!(events(&path), (true, true));
+        assert_eq!(events(&path), at(true, 0, Turn::Working));
+        std::fs::write(&path, "prompt\nstop {\"background_tasks\":[]}\n").unwrap();
+        assert_eq!(events(&path), at(true, 1, Turn::Done));
         // The user typed more after the first answer.
-        std::fs::write(&path, "prompt\nstop\nprompt\n").unwrap();
-        assert_eq!(events(&path), (true, false));
+        std::fs::write(&path, "prompt\nstop {\"background_tasks\":[]}\nprompt\n").unwrap();
+        assert_eq!(events(&path), at(true, 1, Turn::Working));
+    }
+
+    #[test]
+    fn a_long_task_description_is_cut_in_the_run_log() {
+        let long = "x".repeat(300);
+        assert_eq!(task_line(&json!({"type": "subagent", "description": long})), format!("subagent \"{}…\"", "x".repeat(80)));
+        assert_eq!(task_line(&json!({})), " \"\"");
     }
 
     #[test]

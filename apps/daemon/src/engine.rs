@@ -34,7 +34,7 @@ use localcron_core::run::{Run, RunStatus, Trigger};
 use localcron_core::schedule::{self, Schedule};
 use localcron_core::secret;
 
-use crate::console::{self, Console, Pane};
+use crate::console::{self, Console, Pane, Turn};
 use crate::log;
 use crate::peer::{AppCheck, Trust};
 use crate::secrets::{Keychain, ReadError};
@@ -582,9 +582,38 @@ impl Engine {
         let _ = writeln!(file, "# in a console; open it with: {attach}\n");
         let started_at = Instant::now();
         let grace = console::grace();
+        // The turns already written about in the run log.
+        let mut told = 0;
+        let mut warned = false;
         let result = loop {
             std::thread::sleep(console::tick());
-            let (started, finished) = console::events(&events);
+            let ev = console::events(&events);
+            let (started, finished) = (ev.started, ev.turn.finished());
+            if ev.stops > told && ev.turn != Turn::Working {
+                told = ev.stops;
+                match &ev.turn {
+                    Turn::Waiting(tasks) => {
+                        let _ = writeln!(
+                            file,
+                            "# {} claude ended a turn and waits for {} background task(s); the run goes on: {}\n",
+                            now().to_rfc3339(),
+                            tasks.len(),
+                            tasks.join(", ")
+                        );
+                    }
+                    Turn::DoneUnseen if !warned => {
+                        warned = true;
+                        let _ = writeln!(
+                            file,
+                            "# warning: this Claude Code does not tell {} about background agents (no background_tasks \
+                             in the input of its Stop hook). The run ends when claude ends a turn, even when background \
+                             agents still work; they stop with it.\n",
+                            self.instance
+                        );
+                    }
+                    _ => {}
+                }
+            }
             let stopping = self.lock().running.get(run_id).is_none_or(|a| a.stop.is_some());
             match console.pane() {
                 Pane::Gone if started || stopping => break Some((None, "the console was closed".to_string())),

@@ -740,6 +740,12 @@ if [ "$1" = "-p" ]; then echo "run without a console"; exit 0; fi
 case "$FAKE_CLAUDE" in
   dialog) echo "Do you trust the files in this folder?" ;;
   long) printf 'prompt\n' >> "$LOCALCRON_EVENTS"; echo "fake claude busy"; touch fake-started ;;
+  agents)
+    printf 'prompt\n' >> "$LOCALCRON_EVENTS"; echo "fake claude waits for its agents"
+    printf 'stop {"hook_event_name":"Stop","background_tasks":[{"id":"a1","type":"subagent","status":"running","description":"Translate de nl"}]}\n' >> "$LOCALCRON_EVENTS"
+    sleep 2
+    printf 'prompt\n' >> "$LOCALCRON_EVENTS"; echo "the agents reported"
+    printf 'stop {"hook_event_name":"Stop","background_tasks":[]}\n' >> "$LOCALCRON_EVENTS" ;;
   *) printf 'prompt\n' >> "$LOCALCRON_EVENTS"; echo "fake claude working"; echo "args: $*"; printf 'stop\n' >> "$LOCALCRON_EVENTS" ;;
 esac
 sleep 60
@@ -793,6 +799,23 @@ fn with_tmux_a_claude_job_runs_in_a_console_the_user_can_open() {
     assert!(log.contains("--disallowedTools AskUserQuestion") && !log.contains("args: -p"), "{log}");
     assert!(log.contains("# claude --disallowedTools AskUserQuestion 'write the article' (in a console)"), "the header: {log}");
     assert!(!log.contains("run without a console"), "{log}");
+    // This fake claude writes `stop` with no Stop input.
+    assert!(log.contains("# warning: this Claude Code does not tell LocalCron about background agents"), "{log}");
+}
+
+/// Run weekly-wearton-article.9: claude ended a turn to wait for its
+/// background agents; the run must go on until the turn after they report.
+#[test]
+fn a_console_run_waits_for_the_background_agents_of_claude() {
+    let Some(d) = console_daemon(20_000) else { return eprintln!("no tmux: skipped") };
+    d.ok("set_job", json!({"job": claude_job(&d, "translate", "agents")}));
+    let run = d.ok("run_job", json!({"id": "translate"}))["run"]["id"].as_str().unwrap().to_string();
+    d.wait_status(&run, "succeeded");
+    let log = d.ok("get_run_log", json!({"run_id": run}))["text"].as_str().unwrap().to_string();
+    assert!(log.contains("claude ended a turn and waits for 1 background task(s); the run goes on: subagent \"Translate de nl\""), "{log}");
+    // Printed after the first stop: the console was still open.
+    assert!(log.contains("the agents reported"), "the run ended at the first stop: {log}");
+    assert!(!log.contains("# warning:"), "{log}");
 }
 
 #[test]

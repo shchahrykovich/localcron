@@ -213,8 +213,13 @@ impl Job {
 
     /// A claude job in an interactive console (tmux): `claude` without `-p`,
     /// the same options, no AskUserQuestion (nobody may answer), and hooks
-    /// that append `prompt` (the agent started) and `stop` (it finished its
-    /// answer) to the file in `$LOCALCRON_EVENTS`.
+    /// that append lines to the file in `$LOCALCRON_EVENTS`: `prompt` (a turn
+    /// starts: a prompt, or a background task that reports back), and `stop`
+    /// and the Stop input on one line (a turn ended; the input's
+    /// `background_tasks` says what still runs and will wake claude again).
+    /// Claude Code runs a hook with `sh -c`. A JSON text has no newline inside
+    /// its strings, so `tr` puts it on one line. No jq or python: a hook must
+    /// work on every Mac and not slow claude down.
     pub fn console_argv(&self, session: Option<&str>) -> Vec<String> {
         let mut args = vec!["claude".to_string()];
         if let Some(id) = session {
@@ -227,8 +232,11 @@ impl Job {
             args.extend(["--permission-mode".into(), mode.clone()]);
         }
         args.extend(self.args.iter().cloned());
-        let event = |name: &str| serde_json::json!([{"hooks": [{"type": "command", "command": format!("printf '{name}\\n' >> \"$LOCALCRON_EVENTS\"")}]}]);
-        let settings = serde_json::json!({"hooks": {"UserPromptSubmit": event("prompt"), "Stop": event("stop")}});
+        let hook = |command: &str| serde_json::json!([{"hooks": [{"type": "command", "command": command}]}]);
+        let settings = serde_json::json!({"hooks": {
+            "UserPromptSubmit": hook("printf 'prompt\\n' >> \"$LOCALCRON_EVENTS\""),
+            "Stop": hook("{ printf 'stop '; tr -d '\\n'; printf '\\n'; } >> \"$LOCALCRON_EVENTS\""),
+        }});
         args.extend(["--disallowedTools".into(), "AskUserQuestion".into(), "--settings".into(), settings.to_string()]);
         args.push(self.prompt.clone().unwrap_or_default());
         args
@@ -459,7 +467,10 @@ mod tests {
         assert_eq!(args.last().unwrap(), "Review open PRs", "the prompt is last");
         let i = args.iter().position(|a| a == "--settings").unwrap();
         let settings: serde_json::Value = serde_json::from_str(&args[i + 1]).unwrap();
-        assert_eq!(settings["hooks"]["Stop"][0]["hooks"][0]["command"], "printf 'stop\\n' >> \"$LOCALCRON_EVENTS\"");
+        assert_eq!(
+            settings["hooks"]["Stop"][0]["hooks"][0]["command"],
+            "{ printf 'stop '; tr -d '\\n'; printf '\\n'; } >> \"$LOCALCRON_EVENTS\""
+        );
         assert_eq!(settings["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"], "printf 'prompt\\n' >> \"$LOCALCRON_EVENTS\"");
         assert!(args.windows(2).any(|w| w == ["--disallowedTools", "AskUserQuestion"]));
         assert!(args.windows(2).any(|w| w == ["--max-turns", "20"]), "the job's own arguments");

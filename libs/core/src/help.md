@@ -179,7 +179,11 @@ claude job runs as before (`claude -p`): you see its output only at the end.
 - Leave it with **Ctrl-B, then D**: the run goes on. Do not use Ctrl-C or
   `/exit` unless you want to end the run.
 - The run ends when Claude finishes its answer and nobody has the console
-  open. When you are in it, it waits until you leave.
+  open. When you are in it, it waits until you leave. When Claude waits
+  for background work (subagents, background shells), the run waits too:
+  it ends after the answer Claude gives when that work has reported back,
+  or at `timeout_secs`. A background task that never ends, such as a dev
+  server, keeps the run going until `timeout_secs`.
 - When Claude Code does not start its work within 90 s (a dialog waits, such
   as "Do you trust the files in this folder?"), the run goes on without a
   console; its log shows the screen. Open the folder once in Claude Code

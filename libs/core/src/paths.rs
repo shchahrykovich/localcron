@@ -55,6 +55,11 @@ impl Paths {
         self.data.join("secrets.json")
     }
 
+    /// Messages from runs to the user.
+    pub fn messages(&self) -> PathBuf {
+        self.data.join("messages.json")
+    }
+
     pub fn socket(&self) -> PathBuf {
         self.data.join("daemon.sock")
     }

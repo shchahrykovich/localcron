@@ -24,6 +24,7 @@ struct MainView: View {
                         switch model.tab {
                         case .jobs: JobsView()
                         case .runs: RunsView()
+                        case .messages: MessagesView()
                         case .secrets: SecretsView()
                         }
                     }
@@ -102,6 +103,12 @@ struct MainView: View {
                     .padding(.horizontal, 5).padding(.vertical, 1)
                     .background(Theme.accentFill, in: Capsule())
                     .accessibilityLabel("\(model.activeRuns.count) working")
+            case .messages where model.unreadMessages > 0:
+                Text("\(model.unreadMessages)")
+                    .font(.system(size: 10.5, weight: .semibold)).foregroundStyle(.white)
+                    .padding(.horizontal, 5).padding(.vertical, 1)
+                    .background(Theme.unread, in: Capsule())
+                    .accessibilityLabel("\(model.unreadMessages) new")
             case .secrets where model.jobs.contains { $0.secretsAllowed == false }:
                 Circle().fill(Theme.warning).frame(width: 6, height: 6).help("A job waits for your OK")
                     .accessibilityLabel("a job waits for your OK")
@@ -161,7 +168,9 @@ struct MainView: View {
                 SmallButton("Open Week View") { model.openWeek() }
             case .secrets:
                 SmallButton("+ New Secret", prominent: true) { model.newSecret() }
-            case .runs:
+            case .messages where !model.messages.isEmpty:
+                SmallButton("Remove All") { Task { await model.clearMessages() } }
+            case .runs, .messages:
                 EmptyView()
             }
         }

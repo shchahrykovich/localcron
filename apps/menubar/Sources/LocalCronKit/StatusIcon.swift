@@ -64,9 +64,13 @@ public struct StatusIcon: Equatable, Sendable {
     public var next: Date?
     /// When the oldest run that is running now started.
     public var runningSince: Date?
+    /// Messages from runs the user has not read. A dot on the icon, on top
+    /// of the state.
+    public var unreadMessages: Int
 
     public init(down: Bool = false, running: Int = 0, paused: Bool = false, failedJobs: [String] = [],
-                waitingJobs: [String] = [], next: Date? = nil, runningSince: Date? = nil) {
+                waitingJobs: [String] = [], next: Date? = nil, runningSince: Date? = nil, unreadMessages: Int = 0) {
+        self.unreadMessages = unreadMessages
         self.down = down
         self.running = running
         self.paused = paused
@@ -86,10 +90,11 @@ public struct StatusIcon: Equatable, Sendable {
         let starts = jobs.compactMap { $0.activeRun?.status == .running ? ApiDate.parse($0.activeRun?.startedAt) : nil }
         self.init(running: status.running,
                   paused: status.paused,
-                  failedJobs: jobs.filter { $0.lastRun?.status.isFailure == true }.map(\.id),
+                  failedJobs: jobs.filter { $0.lastRun?.failed == true }.map(\.id),
                   waitingJobs: jobs.filter { $0.secretsAllowed == false }.map(\.id),
                   next: status.paused ? nil : ApiDate.parse(status.next?.at),
-                  runningSince: starts.min())
+                  runningSince: starts.min(),
+                  unreadMessages: status.unreadMessages)
     }
 
     /// A job that waits for its secrets failed for that reason: it counts
@@ -97,6 +102,9 @@ public struct StatusIcon: Equatable, Sendable {
     public var failedOnly: [String] { failedJobs.filter { !waitingJobs.contains($0) } }
 
     public var warning: Bool { !failedJobs.isEmpty || !waitingJobs.isEmpty }
+
+    /// A job sent a message the user has not read: the icon gets a dot.
+    public var attention: Bool { !down && unreadMessages > 0 }
 
     /// A run that works is shown first: it is what changes now. A failure
     /// shows again when it ends.
@@ -109,9 +117,11 @@ public struct StatusIcon: Equatable, Sendable {
         return .idle
     }
 
-    /// The text of the "Clock and text" style: "12:00", "3 min", "1 failed",
-    /// "1 waits", "Paused", "Off". Empty when there is nothing to say.
+    /// The text of the "Clock and text" style: "2 messages", "12:00", "3 min",
+    /// "1 failed", "1 waits", "Paused", "Off". Empty when there is nothing
+    /// to say.
     public func label(now: Date = Date(), calendar: Calendar = .current) -> String {
+        if attention { return unreadMessages == 1 ? "1 message" : "\(unreadMessages) messages" }
         switch state {
         case .idle:
             guard let next else { return "" }
@@ -141,6 +151,9 @@ public struct StatusIcon: Equatable, Sendable {
     public func toolTip(appName: String, now: Date = Date()) -> String {
         var lines = [appName]
         if down { lines.append("The daemon is not running.") }
+        if attention {
+            lines.append(unreadMessages == 1 ? "1 new message from a job." : "\(unreadMessages) new messages from jobs.")
+        }
         if running > 0 { lines.append(running == 1 ? "1 run is running." : "\(running) runs are running.") }
         if paused { lines.append("Paused: scheduled runs do not start.") }
         if !waitingJobs.isEmpty { lines.append("Waiting for your OK to read secrets: \(waitingJobs.joined(separator: ", "))") }

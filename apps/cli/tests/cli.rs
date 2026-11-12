@@ -245,3 +245,38 @@ fn attach_explains_a_run_without_a_console() {
     let (ok, _, err, _) = d.cli(&["attach", "nothing"]);
     assert!(!ok && err.contains("no run or running job"), "{err}");
 }
+
+#[test]
+fn a_shell_job_sends_a_message_and_reports_an_error_from_its_run() {
+    let d = Daemon::start();
+    let cli = env!("CARGO_BIN_EXE_localcron");
+    let command = r#""$LC" message "The disk is 95% full" && "$LC" report error --note "3 files were not copied" && echo done"#;
+    let (ok, _, err, _) = d.cli(&["add", "backup", "--schedule", "0 9 * * wed", "--command", command, "--env", &format!("LC={cli}")]);
+    assert!(ok, "{err}");
+    let (ok, out, _, code) = d.cli(&["run", "backup", "--wait"]);
+    assert!(ok && code == Some(0), "{out}");
+    assert!(out.contains("Sent message 1 from backup.") && out.contains("reported error") && out.contains("done"), "{out}");
+
+    let (_, out, _, _) = d.cli(&["runs", "backup"]);
+    assert!(out.contains("succeeded") && out.contains("reported error (3 files were not copied)"), "{out}");
+    let (_, out, _, _) = d.cli(&["messages"]);
+    assert!(out.contains("backup.") && out.contains("(new) The disk is 95% full"), "{out}");
+    let (_, out, _, _) = d.cli(&["status", "--json"]);
+    assert!(out.contains("\"unread_messages\": 1"), "{out}");
+
+    // Outside a run there is no run id.
+    let out = std::process::Command::new(cli)
+        .args(["message", "hello"])
+        .env("LOCALCRON_HOME", d.home())
+        .env_remove("LOCALCRON_RUN_ID")
+        .env_remove("LOCAL_CRON_RUN_ID")
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("only inside a LocalCron run"));
+    // A run id that is not running.
+    let (ok, _, err, _) = d.cli(&["report", "success", "--run", "backup.1"]);
+    assert!(!ok && err.contains("not running"), "{err}");
+    let (ok, _, err, _) = d.cli(&["report", "maybe", "--run", "backup.1"]);
+    assert!(!ok && err.contains("use success or error"), "{err}");
+}

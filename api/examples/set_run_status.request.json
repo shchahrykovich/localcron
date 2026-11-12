@@ -1,0 +1,9 @@
+{
+  "id": 1,
+  "method": "set_run_status",
+  "params": {
+    "note": "3 of 120 files were not copied",
+    "run_id": "backup.12",
+    "status": "error"
+  }
+}

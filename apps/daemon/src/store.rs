@@ -10,6 +10,7 @@ use chrono::{DateTime, FixedOffset};
 
 use localcron_core::api::Config;
 use localcron_core::job::Job;
+use localcron_core::message::Message;
 use localcron_core::run::Run;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -27,6 +28,15 @@ pub struct RunsFile {
     pub next_seq: u64,
     /// Oldest first.
     pub runs: Vec<Run>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct MessagesFile {
+    pub version: u32,
+    /// The id of the next message.
+    pub next_id: u64,
+    /// Oldest first.
+    pub messages: Vec<Message>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]

@@ -20,6 +20,7 @@ final class ApiContractTests: XCTestCase {
         "hello", "status", "list_jobs", "get_job", "set_job", "remove_job", "set_job_enabled", "run_job",
         "cancel_run", "list_runs", "get_run_log", "preview_schedule", "get_config", "set_config",
         "list_secrets", "set_secret", "remove_secret", "allow_job_secrets",
+        "send_message", "set_run_status", "list_messages", "read_messages", "remove_messages",
     ]
 
     /// `set_job_shell` → `set_job`, `run_job_second` → `run_job`,
@@ -62,6 +63,10 @@ final class ApiContractTests: XCTestCase {
         case "set_secret": try check(SetSecretParams.self, json, file, exact: true)
         case "remove_secret": try check(NameParams.self, json, file, exact: true)
         case "allow_job_secrets": try check(AllowJobSecretsParams.self, json, file, exact: true)
+        case "send_message": try check(SendMessageParams.self, json, file, exact: true)
+        case "set_run_status": try check(SetRunStatusParams.self, json, file, exact: true)
+        case "list_messages": try check(ListMessagesParams.self, json, file, exact: true)
+        case "read_messages", "remove_messages": try check(MessageIdsParams.self, json, file, exact: true)
         default: XCTFail("\(file): no params type for \(method)")
         }
     }
@@ -74,7 +79,10 @@ final class ApiContractTests: XCTestCase {
         case "get_job", "set_job_enabled", "allow_job_secrets": try check(JobResult.self, json, file, exact: true)
         case "set_job": try check(SetJobResult.self, json, file, exact: true)
         case "remove_job": try check(RemoveJobResult.self, json, file, exact: true)
-        case "run_job": try check(RunResult.self, json, file, exact: true)
+        case "run_job", "set_run_status": try check(RunResult.self, json, file, exact: true)
+        case "send_message": try check(MessageResult.self, json, file, exact: true)
+        case "list_messages": try check(ListMessagesResult.self, json, file, exact: true)
+        case "read_messages", "remove_messages": try check(MessagesChangedResult.self, json, file, exact: true)
         case "cancel_run": try check(CancelRunResult.self, json, file, exact: true)
         case "list_runs": try check(ListRunsResult.self, json, file, exact: true)
         case "get_run_log": try check(GetRunLogResult.self, json, file, exact: true)

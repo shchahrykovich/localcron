@@ -14,15 +14,15 @@ use anyhow::{Context, bail};
 use chrono::{DateTime, FixedOffset, Local};
 use clap::{Args, Parser, Subcommand};
 use localcron_core::api::{
-    CancelRunParams, Config, Empty, GetRunLogParams, GetRunLogResult, IdParams, JobResult, JobView, ListJobsResult, ListRunsParams, RunJobParams,
-    ListRunsResult, ListSecretsResult, NameParams, PreviewScheduleParams, PreviewScheduleResult, RemoveSecretResult, RunResult,
-    SecretInfo, SecretState, SetConfigParams, SetJobEnabledParams, SetJobParams, SetJobResult, SetSecretParams, SetSecretResult,
-    StatusResult,
+    CancelRunParams, Config, Empty, GetRunLogParams, GetRunLogResult, IdParams, JobResult, JobView, ListJobsResult, ListMessagesParams,
+    ListMessagesResult, ListRunsParams, ListRunsResult, ListSecretsResult, MessageResult, NameParams, PreviewScheduleParams,
+    PreviewScheduleResult, RemoveSecretResult, RunJobParams, RunResult, SecretInfo, SecretState, SendMessageParams, SetConfigParams,
+    SetJobEnabledParams, SetJobParams, SetJobResult, SetRunStatusParams, SetSecretParams, SetSecretResult, StatusResult,
 };
 use localcron_core::instance::Instance;
 use localcron_core::job::{DEFAULT_TIMEOUT_SECS, Job, JobKind};
 use localcron_core::paths::Paths;
-use localcron_core::run::{Run, RunStatus, Trigger};
+use localcron_core::run::{ReportedStatus, Run, RunStatus, Trigger};
 use serde_json::Value;
 
 #[derive(Parser)]
@@ -109,6 +109,30 @@ enum Command {
         /// deleted; the newest run of each job is always kept.
         #[arg(long)]
         log_budget_mb: Option<u32>,
+    },
+    /// From inside a run: send the user a message, shown in the menu bar
+    /// app. Only for what the user must know or do; a run sends at most 3.
+    Message {
+        text: String,
+        /// The run. Default: $LOCALCRON_RUN_ID, which every run has.
+        #[arg(long)]
+        run: Option<String>,
+    },
+    /// From inside a run: say how its work went, apart from the exit code.
+    Report {
+        /// success or error.
+        status: String,
+        /// One line for the user: what went wrong, or what was done.
+        #[arg(long)]
+        note: Option<String>,
+        /// The run. Default: $LOCALCRON_RUN_ID, which every run has.
+        #[arg(long)]
+        run: Option<String>,
+    },
+    /// Messages from runs, newest first.
+    Messages {
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
     },
     /// Values for jobs, such as API tokens, kept in the macOS Keychain.
     #[command(subcommand)]
@@ -421,6 +445,41 @@ fn run(cli: Cli, instance: &Instance, paths: &Paths) -> anyhow::Result<ExitCode>
             }
         }
         Command::Secret(command) => secret(&call, instance, command, json)?,
+        Command::Message { text, run } => {
+            let run_id = mcp::current_run_id(run, |n| std::env::var(n).ok()).map_err(anyhow::Error::msg)?;
+            let v = call("send_message", serde_json::to_value(SendMessageParams { run_id, text })?)?;
+            if json {
+                show(&v)?;
+            } else {
+                let m = serde_json::from_value::<MessageResult>(v)?.message;
+                println!("Sent message {} from {}", m.id, m.run_id);
+            }
+        }
+        Command::Report { status, note, run } => {
+            let status = ReportedStatus::parse(status.trim()).map_err(anyhow::Error::msg)?;
+            let run_id = mcp::current_run_id(run, |n| std::env::var(n).ok()).map_err(anyhow::Error::msg)?;
+            let v = call("set_run_status", serde_json::to_value(SetRunStatusParams { run_id, status, note: note.unwrap_or_default() })?)?;
+            if json {
+                show(&v)?;
+            } else {
+                let run = serde_json::from_value::<RunResult>(v)?.run;
+                println!("{} reported {}", run.id, status.word());
+            }
+        }
+        Command::Messages { limit } => {
+            let v = call("list_messages", serde_json::to_value(ListMessagesParams { limit: Some(limit) })?)?;
+            if json {
+                show(&v)?;
+            } else {
+                let list: ListMessagesResult = serde_json::from_value(v)?;
+                if list.messages.is_empty() {
+                    println!("No messages.");
+                }
+                for m in &list.messages {
+                    println!("{} {} {}{}", when(&m.at), m.run_id, if m.read { "" } else { "(new) " }, m.text);
+                }
+            }
+        }
         Command::Config { max_concurrent, log_budget_mb } => {
             let v = if max_concurrent.is_none() && log_budget_mb.is_none() {
                 call("get_config", serde_json::to_value(Empty {})?)?
@@ -708,11 +767,14 @@ fn print_run_line(run: &Run) {
         _ => String::new(),
     };
     let code = run.exit_code.map_or(String::new(), |c| format!(" exit {c}"));
+    let reported = run.reported.as_ref().map_or(String::new(), |r| {
+        format!(" reported {}{}", r.status.word(), if r.note.is_empty() { String::new() } else { format!(" ({})", r.note) })
+    });
     let console = if run.console.is_some() { " (console: attach)" } else { "" };
     let tokens = run.usage.as_ref().map_or(String::new(), |u| {
         format!(" {} tokens ({} out)", localcron_core::usage::short(u.total()), localcron_core::usage::short(u.output_tokens))
     });
-    println!("{:<30} {:<10} {started}{took}{code}{tokens}{}{console}", run.id, status_word(run.status), message_part(run));
+    println!("{:<30} {:<10} {started}{took}{code}{reported}{tokens}{}{console}", run.id, status_word(run.status), message_part(run));
 }
 
 #[cfg(test)]

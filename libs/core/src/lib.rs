@@ -3,6 +3,7 @@
 //! - `schedule`: cron expressions, `@at` and `@in` one-shot times, next run time.
 //! - `job`: what a job runs and how its fields are checked.
 //! - `run`: one execution of a job.
+//! - `message`: messages from runs to the user.
 //! - `icon`: the SVG icon of a job, cleaned of scripts and links.
 //! - `api`: socket API types, shared by the daemon and the CLI.
 //! - `instance`, `paths`: names and folders of this copy of LocalCron.
@@ -12,6 +13,7 @@ pub mod api;
 pub mod dotenv;
 pub mod instance;
 pub mod job;
+pub mod message;
 pub mod help;
 pub mod icon;
 pub mod note;

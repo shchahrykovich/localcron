@@ -95,9 +95,9 @@ struct RunRow: View {
             model.showLog(run)
         } label: {
             HStack(spacing: 10) {
-                Image(systemName: run.status.symbol).font(.system(size: 15)).foregroundStyle(run.status.color)
+                Image(systemName: run.shownStatus.symbol).font(.system(size: 15)).foregroundStyle(run.shownStatus.color)
                     .frame(width: 18)
-                    .help(run.status.title)
+                    .help(run.shownStatus == run.status ? run.status.title : "Ended with exit code 0, but the job reported an error")
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 6) {
                         if let job = model.job(run.jobId) {
@@ -121,7 +121,7 @@ struct RunRow: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .background(hovering ? Theme.rowHover : run.status.isFailure || line.tone == .danger ? Theme.dangerRow : .clear)
+            .background(hovering ? Theme.rowHover : run.failed || line.tone == .danger ? Theme.dangerRow : .clear)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -455,7 +455,7 @@ struct RunLogView: View {
             Card(padding: 12) {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(spacing: 8) {
-                        Chip(text: run.status.title, kind: run.status.chip)
+                        Chip(text: run.shownStatus.title, kind: run.shownStatus.chip)
                         Text(line.text).font(.system(size: 12)).foregroundStyle(line.tone == .plain ? .primary : line.tone.color)
                             .lineLimit(2)
                         Spacer()

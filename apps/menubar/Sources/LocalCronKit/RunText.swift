@@ -29,6 +29,20 @@ public enum RunText {
     /// "Working for 3 min 12 s", "Succeeded in 6 min 40 s", "Failed with exit
     /// code 2 after 1 min 48 s", "Stopped after 60 min, its time limit".
     public static func line(_ run: Run, now: Date = Date(), calendar: Calendar = .current) -> (text: String, tone: Tone) {
+        let base = processLine(run, now: now, calendar: calendar)
+        // What the job said about its work, once the run has ended. A
+        // process that failed keeps its own line.
+        guard run.status.isFinished, !run.status.isFailure, let reported = run.reported else { return base }
+        switch reported.status {
+        case .error:
+            return ("Reported an error" + (reported.note.isEmpty ? "" : ": \(reported.note)"), .danger)
+        case .success:
+            return reported.note.isEmpty ? base : (base.text + ": \(reported.note)", base.tone)
+        }
+    }
+
+    /// The line from the process alone: its status, exit code and time.
+    private static func processLine(_ run: Run, now: Date, calendar: Calendar) -> (text: String, tone: Tone) {
         let took = run.seconds(now: now).map(Formatting.duration)
         switch run.status {
         case .queued:
@@ -104,7 +118,7 @@ public enum RunFilter: String, CaseIterable, Identifiable, Sendable {
     public func matches(_ run: Run) -> Bool {
         switch self {
         case .all: true
-        case .failed: run.status.isFailure
+        case .failed: run.failed
         case .working: !run.status.isFinished
         }
     }

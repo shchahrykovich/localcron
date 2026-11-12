@@ -100,6 +100,32 @@ final class RunTextTests: XCTestCase {
         XCTAssertEqual(Formatting.bytes(1024 * 1024 * 1024), "1 GB")
         XCTAssertEqual(Formatting.bytes(1536 * 1024 * 1024), "1.5 GB")
     }
+    func testAReportedStatusIsShownNextToTheExitCode() {
+        func text(_ run: Run) -> String { RunText.line(run, now: testNow, calendar: utcCalendar).text }
+        var run = makeRun("backup.3", .succeeded, start: "2026-10-30T10:00:00Z", end: "2026-10-30T10:06:40Z", exit: 0)
+        run.reported = Reported(status: .error, note: "3 files were not copied", at: "2026-10-30T10:06:39Z")
+        XCTAssertEqual(RunText.line(run, now: testNow).text, "Reported an error: 3 files were not copied")
+        XCTAssertEqual(RunText.line(run, now: testNow).tone, .danger)
+        XCTAssertTrue(run.failed)
+        XCTAssertTrue(RunFilter.failed.matches(run))
+        XCTAssertEqual(run.shownStatus, .failed, "the symbol and the calendar show a failure")
+        XCTAssertEqual(RunMark(run), .failed)
+        run.reported = Reported(status: .error, at: "2026-10-30T10:06:39Z")
+        XCTAssertEqual(text(run), "Reported an error")
+        run.reported = Reported(status: .success, note: "120 files copied", at: "2026-10-30T10:06:39Z")
+        XCTAssertEqual(text(run), "Succeeded in 6 min 40 s: 120 files copied")
+        XCTAssertEqual(run.shownStatus, .succeeded)
+        XCTAssertFalse(run.failed)
+        // A process that failed stays failed, whatever the job said.
+        var failed = makeRun("backup.4", .failed, start: "2026-10-30T10:00:00Z", end: "2026-10-30T10:01:00Z", exit: 2)
+        failed.reported = Reported(status: .success, at: "2026-10-30T10:00:30Z")
+        XCTAssertTrue(failed.failed)
+        XCTAssertEqual(text(failed), "Failed with exit code 2 after 1 min 0 s")
+        // While it runs, the run line says so.
+        var running = makeRun("backup.5", .running, start: "2026-10-30T10:36:48Z")
+        running.reported = Reported(status: .error, at: "2026-10-30T10:37:00Z")
+        XCTAssertEqual(text(running), "Working for 3 min 12 s")
+    }
 }
 
 final class CalendarLayoutTests: XCTestCase {
@@ -206,4 +232,5 @@ final class JobIconDraftTests: XCTestCase {
         new.icon = flag
         XCTAssertEqual(try new.job().get().icon, flag)
     }
+
 }

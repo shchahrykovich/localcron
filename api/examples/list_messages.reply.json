@@ -1,0 +1,24 @@
+{
+  "id": 1,
+  "result": {
+    "messages": [
+      {
+        "at": "2026-11-12T09:00:41Z",
+        "id": 7,
+        "job_id": "backup",
+        "read": false,
+        "run_id": "backup.12",
+        "text": "The backup disk is 95% full. The next backup will fail; delete old snapshots in /Volumes/Backup."
+      },
+      {
+        "at": "2026-11-10T09:00:30Z",
+        "id": 6,
+        "job_id": "deps-check",
+        "read": true,
+        "run_id": "deps-check.4",
+        "text": "lodash has a critical advisory (CVE-2026-1234). Update it before the release."
+      }
+    ],
+    "unread": 1
+  }
+}

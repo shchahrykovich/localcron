@@ -24,6 +24,8 @@ The MCP server `{{CLI}}` has these tools. The CLI `{{CLI}}` does the same
 - `list_runs`, `get_run_log`: status, exit code and output of past runs.
 - `preview_schedule`: the next times of a schedule, and the schedule in words.
 - `list_secrets`: the secrets jobs can use, without their values.
+- `send_message`, `set_run_status`: only inside a scheduled run; see
+  "Inside a run" below.
 
 ## How to add a job
 
@@ -54,7 +56,24 @@ The MCP server `{{CLI}}` has these tools. The CLI `{{CLI}}` does the same
 
 The prompt of a scheduled agent must stand alone: the agent starts with no
 memory of this conversation. Say what to do, where, and where to write the
-result (a file, a pull request, a message).
+result (a file, a pull request, a message). Say when the job should message
+the user and what counts as an error (see "Inside a run").
+
+## Inside a run
+
+A job should just run. It speaks to the user only when needed. Each run has
+its id in `LOCALCRON_RUN_ID`; the tools below and the CLI read it from there.
+
+- `send_message` (`{{CLI}} message "TEXT"` in a shell): a message the user
+  sees in the menu bar app, whose icon gets a dot until it is read. Only for
+  what the user must know or do: a problem to fix, a decision, something that
+  will break. Never for progress or a normal result. At most 3 per run.
+- `set_run_status` (`{{CLI}} report error --note "…"`): `error` when the work
+  was not done or went wrong, even if nothing crashed; `success` when it was
+  done. The app shows a reported error as a failed run. Call it once, at the
+  end.
+- An agent whose MCP server does not see `LOCALCRON_RUN_ID` (Codex) reads it
+  with `echo $LOCALCRON_RUN_ID` and gives it as `run_id`.
 
 ## Secrets
 

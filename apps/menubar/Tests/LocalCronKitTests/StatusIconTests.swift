@@ -86,4 +86,29 @@ final class StatusIconTests: XCTestCase {
         XCTAssertEqual(IconStyle.saved("spiral"), .clock)
         XCTAssertEqual(IconStyle.saved(nil), .clock)
     }
+
+    func testUnreadMessagesComeFromTheStatusAndShowFirstInTheText() throws {
+        var s = try status(running: 1, next: "2026-10-30T12:00:00Z")
+        s.unreadMessages = 2
+        let icon = StatusIcon(status: s, jobs: [try job("a", last: "succeeded", startedAt: "2026-10-30T10:30:00Z")])
+        XCTAssertEqual(icon.unreadMessages, 2)
+        XCTAssertTrue(icon.attention)
+        // The state still says a run works; the dot is drawn on top.
+        XCTAssertEqual(icon.state, .working)
+        XCTAssertEqual(icon.label(now: now, calendar: utc), "2 messages")
+        XCTAssertEqual(StatusIcon(unreadMessages: 1).label(now: now), "1 message")
+        XCTAssertTrue(icon.toolTip(appName: "LocalCron", now: now).contains("2 new messages from jobs."))
+        // The daemon is down: only that.
+        XCTAssertEqual(StatusIcon(down: true, unreadMessages: 1).label(now: now), "Off")
+        XCTAssertFalse(StatusIcon().attention)
+    }
+
+    func testAJobThatReportedAnErrorCountsAsFailed() throws {
+        var view = try job("a", last: "succeeded")
+        view.lastRun?.reported = Reported(status: .error, note: "3 files missing", at: "2026-10-30T10:00:00Z")
+        let icon = StatusIcon(status: try status(), jobs: [view])
+        XCTAssertEqual(icon.state, .failed)
+        view.lastRun?.reported?.status = .success
+        XCTAssertEqual(StatusIcon(status: try status(), jobs: [view]).state, .idle)
+    }
 }

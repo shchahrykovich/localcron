@@ -85,4 +85,46 @@ pub struct Run {
     /// when it ended. None for a shell run, or when the file was not found.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<Usage>,
+    /// What the job itself said about its work (`set_run_status`), apart
+    /// from the exit code: an agent can end with code 0 and still report
+    /// that the work failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reported: Option<Reported>,
+}
+
+/// The environment variables that hold the id of the current run. The
+/// daemon sets both; `LOCALCRON_RUN_ID` is the older name.
+pub const RUN_ID_VARS: [&str; 2] = ["LOCALCRON_RUN_ID", "LOCAL_CRON_RUN_ID"];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReportedStatus {
+    Success,
+    Error,
+}
+
+impl ReportedStatus {
+    pub fn parse(text: &str) -> Result<Self, String> {
+        match text {
+            "success" => Ok(Self::Success),
+            "error" => Ok(Self::Error),
+            other => Err(format!("status {other:?}: use success or error")),
+        }
+    }
+
+    pub fn word(self) -> &'static str {
+        match self {
+            Self::Success => "success",
+            Self::Error => "error",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Reported {
+    pub status: ReportedStatus,
+    /// One line for the user: what went wrong, or what was done.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub note: String,
+    pub at: DateTime<FixedOffset>,
 }

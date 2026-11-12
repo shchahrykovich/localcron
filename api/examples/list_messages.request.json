@@ -1,0 +1,7 @@
+{
+  "id": 1,
+  "method": "list_messages",
+  "params": {
+    "limit": 100
+  }
+}

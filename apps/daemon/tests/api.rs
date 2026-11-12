@@ -931,3 +931,90 @@ fn a_codex_run_gets_the_tokens_of_its_rollout() {
     assert_eq!(done["usage"]["cache_read_tokens"], 900);
     assert_eq!(done["usage"]["output_tokens"], 70);
 }
+
+/// A shell job that runs until the file `go` is in its folder.
+fn waiting_job(d: &Daemon, id: &str) -> Value {
+    d.shell_job(id, "echo \"run=$LOCAL_CRON_RUN_ID old=$LOCALCRON_RUN_ID\"; while [ ! -f go ]; do sleep 0.05; done")
+}
+
+#[test]
+fn a_running_run_sends_messages_and_reports_its_status() {
+    let d = Daemon::start();
+    d.ok("set_job", json!({"job": waiting_job(&d, "check")}));
+    let run_id = d.ok("run_job", json!({"id": "check"}))["run"]["id"].as_str().unwrap().to_string();
+    d.wait_status(&run_id, "running");
+    assert_eq!(d.ok("status", json!({}))["unread_messages"], 0);
+
+    let sent = d.ok("send_message", json!({"run_id": run_id, "text": "  The disk is 95% full.\n"}))["message"].clone();
+    assert_eq!(sent["text"], "The disk is 95% full.");
+    assert_eq!(sent["job_id"], "check");
+    assert_eq!(sent["read"], false);
+    d.ok("send_message", json!({"run_id": run_id, "text": "two"}));
+    d.ok("send_message", json!({"run_id": run_id, "text": "three"}));
+    let e = d.call("send_message", json!({"run_id": run_id, "text": "four"})).unwrap_err();
+    assert_eq!(e["code"], "invalid");
+    assert!(e["message"].as_str().unwrap().contains("the most one run may"), "{e}");
+    let e = d.call("send_message", json!({"run_id": run_id, "text": "   "})).unwrap_err();
+    assert!(e["message"].as_str().unwrap().contains("empty"), "{e}");
+
+    let run = d.ok("set_run_status", json!({"run_id": run_id, "status": "success"}))["run"].clone();
+    assert_eq!(run["reported"]["status"], "success");
+    // A second call replaces the first.
+    let run = d.ok("set_run_status", json!({"run_id": run_id, "status": "error", "note": "3 files were not copied"}))["run"].clone();
+    assert_eq!(run["reported"]["status"], "error");
+    assert_eq!(run["reported"]["note"], "3 files were not copied");
+    let e = d.call("set_run_status", json!({"run_id": run_id, "status": "maybe"})).unwrap_err();
+    assert_eq!(e["code"], "bad_request");
+
+    std::fs::write(d.home.path().join("go"), "").unwrap();
+    let done = d.wait_status(&run_id, "succeeded");
+    // The exit code says succeeded; the job's own word stays next to it.
+    assert_eq!(done["reported"]["status"], "error");
+    let log = d.ok("get_run_log", json!({"run_id": run_id}))["text"].as_str().unwrap().to_string();
+    assert!(log.contains(&format!("run={run_id} old={run_id}")), "{log}");
+    assert!(log.contains("the job reported error: 3 files were not copied"), "{log}");
+
+    // A run that has ended cannot send or report any more.
+    let e = d.call("send_message", json!({"run_id": run_id, "text": "late"})).unwrap_err();
+    assert!(e["message"].as_str().unwrap().contains("not running"), "{e}");
+    let e = d.call("set_run_status", json!({"run_id": run_id, "status": "success"})).unwrap_err();
+    assert!(e["message"].as_str().unwrap().contains("not running"), "{e}");
+    let e = d.call("send_message", json!({"run_id": "nope.1", "text": "x"})).unwrap_err();
+    assert_eq!(e["code"], "not_found");
+}
+
+#[test]
+fn messages_are_listed_newest_first_read_removed_and_kept_after_a_restart() {
+    let d = Daemon::start();
+    d.ok("set_job", json!({"job": waiting_job(&d, "check")}));
+    let run_id = d.ok("run_job", json!({"id": "check"}))["run"]["id"].as_str().unwrap().to_string();
+    d.wait_status(&run_id, "running");
+    let first = d.ok("send_message", json!({"run_id": run_id, "text": "first"}))["message"]["id"].as_u64().unwrap();
+    let second = d.ok("send_message", json!({"run_id": run_id, "text": "second"}))["message"]["id"].as_u64().unwrap();
+    std::fs::write(d.home.path().join("go"), "").unwrap();
+    d.wait_status(&run_id, "succeeded");
+
+    let list = d.ok("list_messages", json!({}));
+    assert_eq!(list["unread"], 2);
+    let texts: Vec<&str> = list["messages"].as_array().unwrap().iter().map(|m| m["text"].as_str().unwrap()).collect();
+    assert_eq!(texts, ["second", "first"]);
+    assert_eq!(d.ok("list_messages", json!({"limit": 1}))["messages"].as_array().unwrap().len(), 1);
+
+    let r = d.ok("read_messages", json!({"ids": [first]}));
+    assert_eq!((r["changed"].as_u64(), r["unread"].as_u64()), (Some(1), Some(1)));
+    assert_eq!(d.ok("status", json!({}))["unread_messages"], 1);
+    // Read again: nothing changes.
+    assert_eq!(d.ok("read_messages", json!({"ids": [first]}))["changed"], 0);
+
+    let home = d.stop();
+    let d = Daemon::start_in(home);
+    let list = d.ok("list_messages", json!({}));
+    assert_eq!(list["unread"], 1);
+    assert_eq!(list["messages"][0]["id"].as_u64(), Some(second));
+    assert_eq!(list["messages"][1]["read"], true);
+
+    assert_eq!(d.ok("remove_messages", json!({"ids": [first]}))["changed"], 1);
+    assert_eq!(d.ok("read_messages", json!({}))["unread"], 0);
+    assert_eq!(d.ok("remove_messages", json!({}))["changed"], 1);
+    assert!(d.ok("list_messages", json!({}))["messages"].as_array().unwrap().is_empty());
+}

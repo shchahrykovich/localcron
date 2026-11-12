@@ -19,7 +19,7 @@ final class AppModel {
     }
 
     enum Tab: String, CaseIterable, Hashable {
-        case jobs = "Jobs", runs = "Runs", secrets = "Secrets"
+        case jobs = "Jobs", runs = "Runs", messages = "Messages", secrets = "Secrets"
     }
 
     /// The Runs tab as a list, as a month, or as the tokens agents used.
@@ -51,8 +51,15 @@ final class AppModel {
     /// Settings. `at` makes a second click with the same result visible too.
     var agentResult: (action: AppMenu.Action, feedback: Feedback, at: Date)?
     var busy = false
-    var tab: Tab = .jobs
+    var tab: Tab = .jobs {
+        didSet { if tab == .messages { Task { await markMessagesSeen() } } }
+    }
     var page: Page = .tabs
+    /// Messages from runs, newest first.
+    var messages: [Message] = []
+    /// Messages that were unread when the user opened the tab: they stay
+    /// marked as new until the popover closes.
+    var newMessageIDs: Set<UInt64> = []
     var runsMode: RunsMode = .list
     var runFilter: RunFilter = .all
     /// The Runs tab shows only jobs whose id contains this.
@@ -89,9 +96,16 @@ final class AppModel {
     var openWeek: () -> Void = {}
     /// Ticks every 30 s, so times such as "in 20 min" stay right.
     var now = Date()
-    /// The popover is open: poll often.
+    /// The popover is open: poll often. With unread messages it opens at
+    /// the Messages tab, so what needs the user comes first.
     var windowOpen = false {
-        didSet { if windowOpen && !oldValue { pollNow() } }
+        didSet {
+            if windowOpen && !oldValue {
+                if unreadMessages > 0, page == .tabs { tab = .messages }
+                pollNow()
+            }
+            if !windowOpen { newMessageIDs = [] }
+        }
     }
 
     private var refreshTask: Task<Void, Never>?
@@ -112,6 +126,7 @@ final class AppModel {
     /// Queued and running runs: at most one per job.
     var activeRuns: [Run] { jobs.compactMap(\.activeRun) }
     var statusIcon: StatusIcon { StatusIcon(status: status, jobs: jobs) }
+    var unreadMessages: Int { status?.unreadMessages ?? 0 }
 
     // MARK: Lifecycle
 
@@ -225,9 +240,12 @@ final class AppModel {
             config = c
             // An older daemon has no secrets: not an error.
             secrets = (try? await client.listSecrets()) ?? []
+            // Nor messages.
+            messages = (try? await client.listMessages())?.messages ?? []
             daemonProblem = nil
             now = Date()
             await refreshPlanned()
+            await markMessagesSeen()
         } catch {
             status = nil
             daemonProblem = error.localizedDescription
@@ -487,6 +505,33 @@ final class AppModel {
 
     func job(_ id: String) -> JobView? { jobs.first { $0.id == id } }
 
+    // MARK: Messages from runs
+
+    /// While the user looks at the Messages tab, its unread messages become
+    /// read; they stay marked as new until the popover closes.
+    func markMessagesSeen() async {
+        guard windowOpen, page == .tabs, tab == .messages else { return }
+        let unread = messages.filter { !$0.read }.map(\.id)
+        guard !unread.isEmpty else { return }
+        newMessageIDs.formUnion(unread)
+        guard let result = try? await client.readMessages(ids: unread) else { return }
+        for i in messages.indices where unread.contains(messages[i].id) { messages[i].read = true }
+        status?.unreadMessages = result.unread
+    }
+
+    func removeMessage(_ message: Message) async {
+        await perform("Could not remove the message") { try await client.removeMessages(ids: [message.id]) }
+    }
+
+    func clearMessages() async {
+        if let result = await perform("Could not remove the messages", { try await client.removeMessages() }) {
+            say(result.changed == 1 ? "Removed 1 message." : "Removed \(result.changed) messages.")
+        }
+    }
+
+    /// The run a message came from, when the daemon still keeps it.
+    func run(_ id: String) -> Run? { runs.first { $0.id == id } }
+
     func showLog(_ run: Run) {
         showLog(runID: run.id)
     }
@@ -669,10 +714,10 @@ final class AppModel {
             return AppMenu.RunEntry(runID: run.id, jobID: run.jobId, detail: detail, console: run.console != nil)
         }
         let failed = status == nil ? [] : jobs.compactMap { job -> AppMenu.RunEntry? in
-            guard let last = job.lastRun, last.status.isFailure else { return nil }
+            guard let last = job.lastRun, last.failed else { return nil }
             var parts: [String] = []
             if let at = last.shownAt { parts.append(Formatting.when(at, now: now)) }
-            parts.append(last.exitCode.map { "exit \($0)" } ?? last.status.title.lowercased())
+            parts.append(!last.status.isFailure ? "reported an error" : last.exitCode.map { "exit \($0)" } ?? last.status.title.lowercased())
             return AppMenu.RunEntry(runID: last.id, jobID: job.id, detail: parts.joined(separator: ", "))
         }
         let upcoming = paused ? [] : jobs

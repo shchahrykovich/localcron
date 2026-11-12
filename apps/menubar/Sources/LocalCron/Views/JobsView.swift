@@ -346,7 +346,7 @@ struct JobRow: View {
                 : "Running for \(active.seconds(now: model.now).map { Formatting.duration($0) } ?? "a moment")"
                     + (active.trigger == .manual ? ", you started it" : "")
             Text(line).font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.accent).lineLimit(1)
-        } else if let last = job.lastRun, last.status.isFailure, job.secretsAllowed != false {
+        } else if let last = job.lastRun, last.failed, job.secretsAllowed != false {
             Button {
                 model.showLog(last)
             } label: {
@@ -364,6 +364,7 @@ struct JobRow: View {
     private func failedText(_ run: Run) -> String {
         let at = run.shownAt.map { " at \(Formatting.when($0, now: model.now))" } ?? ""
         let why = run.status == .timedOut ? "Stopped\(at), its time limit" :
+            !run.status.isFailure ? "Reported an error\(at)" :
             run.exitCode.map { "Failed\(at) with exit code \($0)" } ?? "Failed\(at)"
         return why + ". Show log"
     }

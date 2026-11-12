@@ -87,6 +87,17 @@ LocalCron.app (Swift) ───────────────────�
   Tests set `LOCALCRON_TEST_KEYCHAIN` to a keychain file in the temp
   folder, and `LOCALCRON_TEST_TRUST_PEERS=1` to allow from any peer (debug
   builds only), so they never touch the login keychain.
+- Messages (`libs/core/src/message.rs`): a run sends the user a message
+  (`send_message`) or reports how its work went (`set_run_status`, the
+  run's `reported`, apart from its exit code). Only a run that is running
+  now may, found by `LOCALCRON_RUN_ID` (the daemon also sets
+  `LOCAL_CRON_RUN_ID`); at most `MAX_PER_RUN` messages per run, kept in
+  `messages.json` (`MAX_KEPT`, read ones dropped first). `status` has
+  `unread_messages`; the app draws a dot on its icon and opens the popover
+  at the Messages tab while one is unread, and marks them read there. A
+  reported error counts as a failed run in the app (`Run.failed`). Codex
+  does not pass the run's environment to MCP servers, so the tools take
+  `run_id` too.
 - `apps/cli` (`localcron`): stateless. Sync socket client; `localcron mcp` is
   the MCP server (rmcp on a current-thread tokio runtime). `add_job` takes the
   MCP server's current folder as the default `dir`. `apps/cli` must not

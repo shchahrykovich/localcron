@@ -1,0 +1,9 @@
+{
+  "id": 1,
+  "method": "remove_messages",
+  "params": {
+    "ids": [
+      6
+    ]
+  }
+}

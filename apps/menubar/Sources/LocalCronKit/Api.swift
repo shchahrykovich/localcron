@@ -7,7 +7,7 @@
 
 import Foundation
 
-public let apiVersion = "1.5"
+public let apiVersion = "1.6"
 
 public func apiMajor(_ version: String) -> Int? {
     version.split(separator: ".").first.flatMap { Int($0) }
@@ -363,6 +363,42 @@ public struct TokenUsage: Codable, Equatable, Sendable {
     }
 }
 
+/// What the job itself said about its work (`set_run_status`).
+public enum ReportedStatus: String, Codable, Sendable {
+    case success, error
+}
+
+public struct Reported: Codable, Equatable, Sendable {
+    public var status: ReportedStatus
+    /// One line for the user.
+    public var note: String
+    public var at: String
+
+    public init(status: ReportedStatus, note: String = "", at: String) {
+        self.status = status
+        self.note = note
+        self.at = at
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case status, note, at
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        status = try c.decode(ReportedStatus.self, forKey: .status)
+        note = try c.decodeIfPresent(String.self, forKey: .note) ?? ""
+        at = try c.decode(String.self, forKey: .at)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(status, forKey: .status)
+        if !note.isEmpty { try c.encode(note, forKey: .note) }
+        try c.encode(at, forKey: .at)
+    }
+}
+
 public struct Run: Codable, Equatable, Sendable, Identifiable {
     /// `<job id>.<number>`.
     public var id: String
@@ -387,9 +423,11 @@ public struct Run: Codable, Equatable, Sendable, Identifiable {
     public var sessionId: String?
     /// The tokens a claude or codex run used.
     public var usage: TokenUsage?
+    /// What the job said about its work, apart from the exit code.
+    public var reported: Reported?
 
     enum CodingKeys: String, CodingKey {
-        case id, trigger, status, pid, log, message, console, usage
+        case id, trigger, status, pid, log, message, console, usage, reported
         case jobId = "job_id"
         case sessionId = "session_id"
         case dueAt = "due_at"
@@ -403,7 +441,8 @@ public struct Run: Codable, Equatable, Sendable, Identifiable {
     public init(id: String, jobId: String, trigger: Trigger, status: RunStatus, dueAt: String? = nil, queuedAt: String,
                 startedAt: String? = nil, endedAt: String? = nil, exitCode: Int32? = nil, pid: UInt32? = nil,
                 log: String? = nil, logBytes: UInt64? = nil, message: String = "", console: String? = nil,
-                sessionId: String? = nil, usage: TokenUsage? = nil) {
+                sessionId: String? = nil, usage: TokenUsage? = nil, reported: Reported? = nil) {
+        self.reported = reported
         self.sessionId = sessionId
         self.usage = usage
         self.id = id
@@ -440,6 +479,7 @@ public struct Run: Codable, Equatable, Sendable, Identifiable {
         logBytes = try c.decodeIfPresent(UInt64.self, forKey: .logBytes)
         message = try c.decodeIfPresent(String.self, forKey: .message) ?? ""
         console = try c.decodeIfPresent(String.self, forKey: .console)
+        reported = try c.decodeIfPresent(Reported.self, forKey: .reported)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -460,7 +500,15 @@ public struct Run: Codable, Equatable, Sendable, Identifiable {
         try c.encodeIfPresent(console, forKey: .console)
         try c.encodeIfPresent(sessionId, forKey: .sessionId)
         try c.encodeIfPresent(usage, forKey: .usage)
+        try c.encodeIfPresent(reported, forKey: .reported)
     }
+
+    /// The run went wrong: its process failed, or the job reported an error.
+    public var failed: Bool { status.isFailure || reported?.status == .error }
+
+    /// The status the app draws: a run that ended with code 0 but reported
+    /// an error shows as failed.
+    public var shownStatus: RunStatus { status == .succeeded && reported?.status == .error ? .failed : status }
 }
 
 // MARK: - Status and config
@@ -492,9 +540,12 @@ public struct StatusResult: Codable, Equatable, Sendable {
     public var logsDir: String
     /// The space of the run logs. Nil from a daemon before 1.4.
     public var logs: LogUsage?
+    /// Messages from runs the user has not seen. 0 from a daemon before 1.6.
+    public var unreadMessages: Int
 
     enum CodingKeys: String, CodingKey {
         case pid, jobs, running, queued, paused, next, logs
+        case unreadMessages = "unread_messages"
         case daemonVersion = "daemon_version"
         case apiVersion = "api_version"
         case startedAt = "started_at"
@@ -521,6 +572,7 @@ public struct StatusResult: Codable, Equatable, Sendable {
         dataDir = try c.decode(String.self, forKey: .dataDir)
         logsDir = try c.decode(String.self, forKey: .logsDir)
         logs = try c.decodeIfPresent(LogUsage.self, forKey: .logs)
+        unreadMessages = try c.decodeIfPresent(Int.self, forKey: .unreadMessages) ?? 0
     }
 }
 
@@ -824,6 +876,107 @@ public struct PreviewScheduleParams: Codable, Equatable, Sendable {
 public struct PreviewScheduleResult: Codable, Equatable, Sendable {
     public var description: String
     public var next: [String]
+}
+
+// MARK: - Messages
+
+/// A message from a run to the user.
+public struct Message: Codable, Equatable, Sendable, Identifiable {
+    public var id: UInt64
+    public var jobId: String
+    public var runId: String
+    public var at: String
+    public var text: String
+    /// The user has seen it.
+    public var read: Bool
+
+    public init(id: UInt64, jobId: String, runId: String, at: String, text: String, read: Bool = false) {
+        self.id = id
+        self.jobId = jobId
+        self.runId = runId
+        self.at = at
+        self.text = text
+        self.read = read
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, at, text, read
+        case jobId = "job_id"
+        case runId = "run_id"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UInt64.self, forKey: .id)
+        jobId = try c.decode(String.self, forKey: .jobId)
+        runId = try c.decode(String.self, forKey: .runId)
+        at = try c.decode(String.self, forKey: .at)
+        text = try c.decode(String.self, forKey: .text)
+        read = try c.decodeIfPresent(Bool.self, forKey: .read) ?? false
+    }
+}
+
+public struct SendMessageParams: Codable, Equatable, Sendable {
+    public var runId: String
+    public var text: String
+
+    enum CodingKeys: String, CodingKey {
+        case text
+        case runId = "run_id"
+    }
+}
+
+public struct MessageResult: Codable, Equatable, Sendable {
+    public var message: Message
+}
+
+public struct SetRunStatusParams: Codable, Equatable, Sendable {
+    public var runId: String
+    public var status: ReportedStatus
+    public var note: String
+
+    enum CodingKeys: String, CodingKey {
+        case status, note
+        case runId = "run_id"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        runId = try c.decode(String.self, forKey: .runId)
+        status = try c.decode(ReportedStatus.self, forKey: .status)
+        note = try c.decodeIfPresent(String.self, forKey: .note) ?? ""
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(runId, forKey: .runId)
+        try c.encode(status, forKey: .status)
+        if !note.isEmpty { try c.encode(note, forKey: .note) }
+    }
+}
+
+public struct ListMessagesParams: Codable, Equatable, Sendable {
+    public var limit: Int?
+
+    public init(limit: Int? = nil) { self.limit = limit }
+}
+
+public struct ListMessagesResult: Codable, Equatable, Sendable {
+    /// Newest first.
+    public var messages: [Message]
+    public var unread: Int
+}
+
+/// `read_messages` and `remove_messages`. Nil `ids`: every message.
+public struct MessageIdsParams: Codable, Equatable, Sendable {
+    public var ids: [UInt64]?
+
+    public init(ids: [UInt64]? = nil) { self.ids = ids }
+}
+
+public struct MessagesChangedResult: Codable, Equatable, Sendable {
+    public var changed: Int
+    public var unread: Int
 }
 
 // MARK: - Secrets

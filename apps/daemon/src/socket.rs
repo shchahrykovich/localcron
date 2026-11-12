@@ -6,9 +6,9 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::Arc;
 
 use localcron_core::api::{
-    self, AllowJobSecretsParams, ApiError, CancelRunParams, ErrorCode, GetRunLogParams, HelloParams, HelloResult, IdParams, JobResult, ListRunsParams,
-    NameParams, PreviewScheduleParams, Request, Response, RunJobParams, RunResult, SetConfigParams, SetJobEnabledParams, SetJobParams,
-    SetSecretParams,
+    self, AllowJobSecretsParams, ApiError, CancelRunParams, ErrorCode, GetRunLogParams, HelloParams, HelloResult, IdParams, JobResult,
+    ListMessagesParams, ListRunsParams, MessageIdsParams, MessageResult, NameParams, PreviewScheduleParams, Request, Response, RunJobParams,
+    RunResult, SendMessageParams, SetConfigParams, SetJobEnabledParams, SetJobParams, SetRunStatusParams, SetSecretParams,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -121,6 +121,11 @@ pub fn dispatch(engine: &Engine, request: Request, trust: &Trust) -> Result<Valu
         "set_secret" => to_value(engine.set_secret(params::<SetSecretParams>(p)?)?),
         "remove_secret" => to_value(engine.remove_secret(&params::<NameParams>(p)?.name)?),
         "allow_job_secrets" => to_value(JobResult { job: engine.allow_job_secrets(params::<AllowJobSecretsParams>(p)?, trust)? }),
+        "send_message" => to_value(MessageResult { message: engine.send_message(params::<SendMessageParams>(p)?)? }),
+        "set_run_status" => to_value(RunResult { run: engine.set_run_status(params::<SetRunStatusParams>(p)?)? }),
+        "list_messages" => to_value(engine.list_messages(params::<ListMessagesParams>(p)?)),
+        "read_messages" => to_value(engine.read_messages(params::<MessageIdsParams>(p)?)?),
+        "remove_messages" => to_value(engine.remove_messages(params::<MessageIdsParams>(p)?)?),
         other => Err(ApiError::new(ErrorCode::UnknownMethod, format!("unknown method {other:?}"))),
     }
 }

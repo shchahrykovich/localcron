@@ -14,7 +14,7 @@ use tokio::process::Command;
 
 async fn mcp_client(home: &std::path::Path, cwd: &std::path::Path) -> RunningService<rmcp::RoleClient, ()> {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_localcron"));
-    cmd.arg("mcp").env("LOCALCRON_HOME", home).current_dir(cwd);
+    cmd.arg("mcp").env("LOCALCRON_HOME", home).env_remove("LOCALCRON_RUN_ID").env_remove("LOCAL_CRON_RUN_ID").current_dir(cwd);
     ().serve(TokioChildProcess::new(cmd).unwrap()).await.unwrap()
 }
 
@@ -48,12 +48,15 @@ async fn the_tools_are_listed_with_instructions() {
             "preview_schedule",
             "remove_job",
             "run_job",
+            "send_message",
             "set_paused",
+            "set_run_status",
             "status"
         ]
     );
     let info = client.peer_info().unwrap();
     assert!(info.instructions.as_deref().unwrap().contains("How to add a job"));
+    assert!(info.instructions.as_deref().unwrap().contains("## Inside a run"));
     client.cancel().await.unwrap();
 }
 
@@ -134,5 +137,19 @@ async fn an_agent_names_a_secret_and_gets_the_command_for_the_user() {
     let info = client.peer_info().unwrap();
     let note = info.instructions.as_deref().unwrap();
     assert!(note.contains("## Secrets") && note.contains("localcron secret set"), "{note}");
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
+async fn messages_and_status_need_a_run() {
+    let d = Daemon::start();
+    let client = mcp_client(d.home(), d.home()).await;
+    let r = call(&client, "send_message", json!({"text": "hello"})).await;
+    assert_eq!(r.is_error, Some(true));
+    assert!(json_of(&r).as_str().unwrap().contains("only inside a LocalCron run"), "{r:?}");
+    let r = call(&client, "set_run_status", json!({"status": "done"})).await;
+    assert!(json_of(&r).as_str().unwrap().contains("use success or error"), "{r:?}");
+    let r = call(&client, "set_run_status", json!({"status": "error", "run_id": "nope.1"})).await;
+    assert!(json_of(&r).as_str().unwrap().contains("no run"), "{r:?}");
     client.cancel().await.unwrap();
 }

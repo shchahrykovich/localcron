@@ -1,0 +1,21 @@
+{
+  "id": 1,
+  "result": {
+    "run": {
+      "due_at": "2026-11-12T09:00:00Z",
+      "id": "backup.12",
+      "job_id": "backup",
+      "log": "/Users/me/Library/Logs/LocalCron/runs/backup/backup.12.log",
+      "pid": 9487,
+      "queued_at": "2026-11-12T09:00:00Z",
+      "reported": {
+        "at": "2026-11-12T09:01:12Z",
+        "note": "3 of 120 files were not copied",
+        "status": "error"
+      },
+      "started_at": "2026-11-12T09:00:00Z",
+      "status": "running",
+      "trigger": "schedule"
+    }
+  }
+}

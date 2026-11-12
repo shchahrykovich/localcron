@@ -62,6 +62,9 @@ A new job runs in the current folder; `--dir` changes it.
 | `{{CLI}} runs [ID]` | Recent runs, newest first |
 | `{{CLI}} log RUN` | The output of a run |
 | `{{CLI}} next "S"` | The next times of a schedule |
+| `{{CLI}} message "TEXT"` | From inside a run: a message to you, in the app's Messages tab |
+| `{{CLI}} report success\|error [--note TEXT]` | From inside a run: how its work went, apart from the exit code |
+| `{{CLI}} messages` | The messages from runs, newest first |
 | `{{CLI}} config` | Show or change the settings: `--max-concurrent N`, `--log-budget-mb N` |
 | `{{CLI}} secret set NAME` | Store a secret's value in the Keychain |
 | `{{CLI}} secret describe NAME "TEXT"` | Change a secret's description |
@@ -156,7 +159,24 @@ new value when this one expires or leaks.
   the job has `--no-catch-up`. Times missed while paused do not run.
 - Runs use the PATH of your login shell, so `claude`, `codex`, `node` and
   `git` are found as in a terminal. A run also gets `LOCALCRON_JOB_ID` and
-  `LOCALCRON_RUN_ID`.
+  its own id in `LOCALCRON_RUN_ID` (also as `LOCAL_CRON_RUN_ID`).
+
+## Messages and status from a run
+
+A job should just run. When something needs you, a run can tell you:
+
+- **A message**: `{{CLI}} message "The backup disk is 95% full"` in a shell
+  job, or the `send_message` tool in an agent job. It shows in the
+  **Messages** tab, and the menu bar icon gets a blue dot until you read it.
+  A run sends at most 3, of at most 2000 characters each. Use it only for
+  what you must know or do, never for progress.
+- **A status**: `{{CLI}} report error --note "3 files were not copied"`, or
+  the `set_run_status` tool. The exit code only says that the program ended;
+  the reported status says whether the work was done. A reported error
+  shows as a failed run, also when the exit code was 0.
+
+Both work only while the run is running, and take the run from
+`LOCALCRON_RUN_ID` (`--run RUN` or `run_id` to give another).
 - An agent run has nobody to approve its tools: a tool that needs approval
   is refused. Give `--permission-mode` or `--arg --allowedTools …` only for
   what you accept the job may do.

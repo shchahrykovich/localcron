@@ -113,8 +113,22 @@ with Ctrl-B, then D; the run goes on. Without tmux a claude job runs as
 launchd starts the daemon with a short PATH, where `claude`, `codex` and
 Homebrew tools are missing. Before a run, LocalCron asks your login shell for
 its PATH (`$SHELL -l -i -c`), as editors do, and keeps it for 10 minutes. A
-run also gets `LOCALCRON_JOB_ID`, `LOCALCRON_RUN_ID`, the job's own `env`
-and its secrets.
+run also gets `LOCALCRON_JOB_ID`, its own id in `LOCALCRON_RUN_ID` (also as
+`LOCAL_CRON_RUN_ID`), the job's own `env` and its secrets.
+
+## Messages and status from a run
+
+A job should just run. When something needs you, a run can say so:
+
+- `localcron message "The backup disk is 95% full"` (or the MCP tool
+  `send_message`): shown in the app's **Messages** tab. The menu bar icon
+  gets a blue dot until you read it, and the popover opens at that tab. A
+  run sends at most 3 messages.
+- `localcron report error --note "3 files were not copied"` (or
+  `set_run_status`): how the work went, apart from the exit code. A reported
+  error shows as a failed run, also when the program ended with code 0.
+
+Both take the run from `LOCALCRON_RUN_ID` and work only while it runs.
 
 ## Secrets
 

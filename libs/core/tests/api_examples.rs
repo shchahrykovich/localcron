@@ -56,6 +56,10 @@ fn every_example_decodes_and_every_method_has_one() {
                 "set_secret" => check::<SetSecretParams>(p, &file),
                 "remove_secret" => check::<NameParams>(p, &file),
                 "allow_job_secrets" => check::<AllowJobSecretsParams>(p, &file),
+                "send_message" => check::<SendMessageParams>(p, &file),
+                "set_run_status" => check::<SetRunStatusParams>(p, &file),
+                "list_messages" => check::<ListMessagesParams>(p, &file),
+                "read_messages" | "remove_messages" => check::<MessageIdsParams>(p, &file),
                 other => panic!("{file}: no params type for {other}"),
             }
         } else {
@@ -68,7 +72,10 @@ fn every_example_decodes_and_every_method_has_one() {
                 "get_job" | "set_job_enabled" | "allow_job_secrets" => check::<JobResult>(r, &file),
                 "set_job" => check::<SetJobResult>(r, &file),
                 "remove_job" => check::<RemoveJobResult>(r, &file),
-                "run_job" => check::<RunResult>(r, &file),
+                "run_job" | "set_run_status" => check::<RunResult>(r, &file),
+                "send_message" => check::<MessageResult>(r, &file),
+                "list_messages" => check::<ListMessagesResult>(r, &file),
+                "read_messages" | "remove_messages" => check::<MessagesChangedResult>(r, &file),
                 "cancel_run" => check::<CancelRunResult>(r, &file),
                 "list_runs" => check::<ListRunsResult>(r, &file),
                 "get_run_log" => check::<GetRunLogResult>(r, &file),

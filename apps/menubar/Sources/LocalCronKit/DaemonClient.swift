@@ -214,4 +214,15 @@ public final class DaemonClient: Sendable {
     public func allowJobSecrets(_ job: Job) async throws -> JobView {
         try await call("allow_job_secrets", AllowJobSecretsParams(job: job), as: JobResult.self).job
     }
+    public func listMessages(limit: Int = 200) async throws -> ListMessagesResult {
+        try await call("list_messages", ListMessagesParams(limit: limit))
+    }
+    /// Nil `ids`: every message.
+    public func readMessages(ids: [UInt64]? = nil) async throws -> MessagesChangedResult {
+        try await call("read_messages", MessageIdsParams(ids: ids))
+    }
+    /// Nil `ids`: every message.
+    public func removeMessages(ids: [UInt64]? = nil) async throws -> MessagesChangedResult {
+        try await call("remove_messages", MessageIdsParams(ids: ids))
+    }
 }

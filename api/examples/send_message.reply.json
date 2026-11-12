@@ -1,0 +1,13 @@
+{
+  "id": 1,
+  "result": {
+    "message": {
+      "at": "2026-11-12T09:00:41Z",
+      "id": 7,
+      "job_id": "backup",
+      "read": false,
+      "run_id": "backup.12",
+      "text": "The backup disk is 95% full. The next backup will fail; delete old snapshots in /Volumes/Backup."
+    }
+  }
+}

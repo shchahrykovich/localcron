@@ -17,6 +17,8 @@ enum MenuBarIconRenderer {
         var red: NSColor = .systemRed
         var orange: NSColor = .systemOrange
         var green: NSColor = .systemGreen
+        /// The dot of an unread message.
+        var blue: NSColor = .systemBlue
     }
 
     static let size = NSSize(width: 18, height: 18)
@@ -32,7 +34,7 @@ enum MenuBarIconRenderer {
     /// `spin` turns the working arc of the ring style, from 0 to 1.
     static func image(style: IconStyle, icon: StatusIcon, colored: Bool, dev: Bool, spin: Double = 0, now: Date = Date()) -> NSImage {
         let state = icon.state
-        let tinted = colored && [IconState.working, .failed, .waiting].contains(state)
+        let tinted = colored && ([IconState.working, .failed, .waiting].contains(state) || icon.attention)
         let template = !dev && !tinted
         let colors = Colors(ink: dev ? .systemOrange : template ? .black : menuBarText)
         let fraction = icon.ringFraction(now: now)
@@ -43,6 +45,7 @@ enum MenuBarIconRenderer {
             case .ring: drawRing(cg, state: state, c: colors, colored: colored, fraction: fraction, spin: spin)
             case .tile: drawTile(cg, state: state, c: colors, colored: colored)
             }
+            if icon.attention { messageDot(cg, c: colors, colored: colored) }
             return true
         }
         image.isTemplate = template
@@ -78,6 +81,14 @@ enum MenuBarIconRenderer {
         case .paused: badge(cg, .pause, c: c, colored: colored)
         case .idle, .down: break
         }
+    }
+
+    /// An unread message: a dot on the top right corner, with a clear ring
+    /// around it, as on an app icon with a new message. Drawn over every
+    /// style, so the state underneath still shows.
+    private static func messageDot(_ cg: CGContext, c: Colors, colored: Bool) {
+        clear(cg) { $0.fillEllipse(in: circle(14.6, 3.4, 4)) }
+        fill(cg, colored ? c.blue : c.ink) { $0.addEllipse(in: circle(14.6, 3.4, 2.7)) }
     }
 
     private enum Badge { case play, fail, wait, pause }

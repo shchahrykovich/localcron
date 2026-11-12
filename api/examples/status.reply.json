@@ -23,6 +23,7 @@
     "pid": 9450,
     "queued": 0,
     "running": 0,
-    "started_at": "2026-10-28T11:02:52Z"
+    "started_at": "2026-10-28T11:02:52Z",
+    "unread_messages": 1
   }
 }

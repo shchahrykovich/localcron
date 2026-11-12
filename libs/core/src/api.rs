@@ -11,16 +11,17 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::job::Job;
-use crate::run::Run;
+use crate::message::Message;
+use crate::run::{ReportedStatus, Run};
 
 /// Major.minor. A client stops when the major number differs.
-pub const API_VERSION: &str = "1.5";
+pub const API_VERSION: &str = "1.6";
 
 pub fn api_major(version: &str) -> Option<u32> {
     version.split('.').next()?.parse().ok()
 }
 
-pub const METHODS: [&str; 18] = [
+pub const METHODS: [&str; 23] = [
     "hello",
     "status",
     "list_jobs",
@@ -39,6 +40,11 @@ pub const METHODS: [&str; 18] = [
     "set_secret",
     "remove_secret",
     "allow_job_secrets",
+    "send_message",
+    "set_run_status",
+    "list_messages",
+    "read_messages",
+    "remove_messages",
 ];
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -127,6 +133,9 @@ pub struct StatusResult {
     /// The space the run logs use, against `Config::log_budget_mb`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub logs: Option<LogUsage>,
+    /// Messages from runs the user has not seen yet.
+    #[serde(default)]
+    pub unread_messages: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -457,6 +466,56 @@ mod tests {
         let text = format!("{p:?}");
         assert!(!text.contains("ghp_secret") && text.contains("<hidden>"), "{text}");
     }
+}
+
+/// A run tells the user something. Only a run that is running now may.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SendMessageParams {
+    pub run_id: String,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MessageResult {
+    pub message: Message,
+}
+
+/// A run says how its work went, apart from its exit code. A second call
+/// replaces the first. Only a run that is running now may.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SetRunStatusParams {
+    pub run_id: String,
+    pub status: ReportedStatus,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub note: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ListMessagesParams {
+    /// Newest first. Default 100.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ListMessagesResult {
+    /// Newest first.
+    pub messages: Vec<Message>,
+    pub unread: usize,
+}
+
+/// `read_messages` and `remove_messages`. Without `ids`: every message.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct MessageIdsParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ids: Option<Vec<u64>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MessagesChangedResult {
+    /// Messages marked read, or removed.
+    pub changed: usize,
+    pub unread: usize,
 }
 
 /// The menu bar app sends it after the user confirms: the job as the user

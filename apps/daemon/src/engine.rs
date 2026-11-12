@@ -23,14 +23,15 @@ use chrono::{DateTime, FixedOffset, Local, Timelike};
 use localcron_core::api::{
     self, AllowJobSecretsParams, ApiError, CancelRunResult, Config, ErrorCode, GetRunLogParams, GetRunLogResult, JobView, ListJobsResult, ListRunsParams,
     ListRunsResult, ListSecretsResult, MissingSecret, NextRun, PreviewScheduleParams, PreviewScheduleResult, RemoveJobResult,
-    RemoveSecretResult, RunJobParams, SecretInfo, SecretState, SetConfigParams, SetJobParams, SetJobResult, SetSecretParams, SetSecretResult,
-    StatusResult,
+    ListMessagesParams, ListMessagesResult, MessageIdsParams, MessagesChangedResult, RemoveSecretResult, RunJobParams, SecretInfo, SecretState,
+    SendMessageParams, SetConfigParams, SetJobParams, SetJobResult, SetRunStatusParams, SetSecretParams, SetSecretResult, StatusResult,
 };
 use localcron_core::icon;
 use localcron_core::instance::Instance;
 use localcron_core::job::{Job, JobKind};
+use localcron_core::message::{self, Message};
 use localcron_core::paths::Paths;
-use localcron_core::run::{Run, RunStatus, Trigger};
+use localcron_core::run::{self as run_ids, Reported, Run, RunStatus, Trigger};
 use localcron_core::schedule::{self, Schedule};
 use localcron_core::secret;
 
@@ -40,7 +41,7 @@ use crate::peer::{AppCheck, Trust};
 use crate::secrets::{Keychain, ReadError};
 use crate::shellenv::ShellEnvCache;
 use crate::usage;
-use crate::store::{self, Grant, JobsFile, RunsFile, SecretEntry, SecretsFile};
+use crate::store::{self, Grant, JobsFile, MessagesFile, RunsFile, SecretEntry, SecretsFile};
 
 pub const DAEMON_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -102,6 +103,9 @@ struct State {
     secrets: BTreeMap<String, SecretEntry>,
     /// By job id.
     grants: BTreeMap<String, Grant>,
+    /// Messages from runs to the user, oldest first.
+    messages: Vec<Message>,
+    next_message_id: u64,
     stopping: bool,
 }
 
@@ -127,6 +131,8 @@ impl Engine {
         let (config, problem) = store::load_config(&paths.config());
         problem.into_iter().for_each(|p| log!("{p}"));
         let (secrets_file, problem): (SecretsFile, _) = store::load(&paths.secrets());
+        problem.into_iter().for_each(|p| log!("{p}"));
+        let (messages_file, problem): (MessagesFile, _) = store::load(&paths.messages());
         problem.into_iter().for_each(|p| log!("{p}"));
         let keychain = Keychain::for_instance(&instance);
         let app_check = AppCheck::for_this_daemon(&instance);
@@ -182,6 +188,8 @@ impl Engine {
                 config,
                 secrets: secrets_file.secrets.into_iter().map(|s| (s.name.clone(), s)).collect(),
                 grants: secrets_file.grants.into_iter().map(|g| (g.job_id.clone(), g)).collect(),
+                next_message_id: messages_file.next_id.max(messages_file.messages.iter().map(|m| m.id + 1).max().unwrap_or(1)),
+                messages: messages_file.messages,
                 stopping: false,
             }),
             wake: Condvar::new(),
@@ -326,6 +334,7 @@ impl Engine {
             console: None,
             session_id: None,
             usage: None,
+            reported: None,
         };
         if let Some(busy) = st.runs.iter().find(|r| r.job_id == job_id && !r.status.is_finished()) {
             run.status = RunStatus::Skipped;
@@ -404,8 +413,8 @@ impl Engine {
             ("PATH".into(), env.path.clone().into()),
             ("SHELL".into(), env.shell.clone().into()),
             ("LOCALCRON_JOB_ID".into(), job.id.clone().into()),
-            ("LOCALCRON_RUN_ID".into(), run_id.into()),
         ];
+        run_env.extend(run_ids::RUN_ID_VARS.iter().map(|var| (OsString::from(var), OsString::from(run_id))));
         if std::env::var_os("LANG").is_none() {
             run_env.push(("LANG".into(), "en_US.UTF-8".into()));
         }
@@ -696,8 +705,11 @@ impl Engine {
             RunStatus::Canceled => run.message.clone(),
             _ => message,
         };
+        let reported = run.reported.as_ref().map_or(String::new(), |r| {
+            format!("\n# the job reported {}{}", r.status.word(), if r.note.is_empty() { String::new() } else { format!(": {}", r.note) })
+        });
         let footer = format!(
-            "\n# {} {:?} exit code {} {}\n",
+            "\n# {} {:?} exit code {} {}{reported}\n",
             now().to_rfc3339(),
             run.status,
             code.map_or("none".into(), |c| c.to_string()),
@@ -877,6 +889,7 @@ impl Engine {
             data_dir: self.paths.data.to_string_lossy().into_owned(),
             logs_dir: self.paths.logs.to_string_lossy().into_owned(),
             logs: Some(log_usage(&st)),
+            unread_messages: unread(&st),
         }
     }
 
@@ -1181,6 +1194,102 @@ impl Engine {
         Ok(config)
     }
 
+    // MARK: Messages
+
+    /// The run, when it is running now: only a run that works may send a
+    /// message or report its status, so an old run cannot be changed.
+    fn running_run<'a>(st: &'a mut State, run_id: &str) -> ApiResult<&'a mut Run> {
+        let run = st
+            .runs
+            .iter_mut()
+            .find(|r| r.id == run_id)
+            .ok_or_else(|| ApiError::new(ErrorCode::NotFound, format!("no run {run_id:?}")))?;
+        if run.status != RunStatus::Running {
+            return Err(invalid(format!("run {run_id} is not running: only a run that is running now can do this")));
+        }
+        Ok(run)
+    }
+
+    fn save_messages(&self, st: &State) -> ApiResult<()> {
+        let file = MessagesFile { version: 1, next_id: st.next_message_id, messages: st.messages.clone() };
+        store::save(&self.paths.messages(), &file).map_err(|e| {
+            log!("cannot save {}: {e}", self.paths.messages().display());
+            internal(format!("cannot save {}: {e}", self.paths.messages().display()))
+        })
+    }
+
+    pub fn send_message(&self, params: SendMessageParams) -> ApiResult<Message> {
+        let text = message::check_text(&params.text).map_err(invalid)?;
+        let mut st = self.lock();
+        let job_id = Self::running_run(&mut st, &params.run_id)?.job_id.clone();
+        let sent = st.messages.iter().filter(|m| m.run_id == params.run_id).count();
+        if sent >= message::MAX_PER_RUN {
+            return Err(invalid(format!(
+                "run {} has sent {sent} messages, the most one run may: messages are only for what the user must know; \
+                 put the rest in one message or in the run's output",
+                params.run_id
+            )));
+        }
+        let msg = Message { id: st.next_message_id, job_id, run_id: params.run_id, at: now(), text, read: false };
+        let before = (st.messages.clone(), st.next_message_id);
+        st.next_message_id += 1;
+        st.messages.push(msg.clone());
+        message::prune(&mut st.messages, message::MAX_KEPT);
+        if let Err(e) = self.save_messages(&st) {
+            (st.messages, st.next_message_id) = before;
+            return Err(e);
+        }
+        log!("run {}: message {} to the user", msg.run_id, msg.id);
+        Ok(msg)
+    }
+
+    pub fn set_run_status(&self, params: SetRunStatusParams) -> ApiResult<Run> {
+        let note = message::check_note(&params.note).map_err(invalid)?;
+        let mut st = self.lock();
+        let run = Self::running_run(&mut st, &params.run_id)?;
+        run.reported = Some(Reported { status: params.status, note, at: now() });
+        let run = run.clone();
+        self.save_runs(&st);
+        log!("run {}: reported {}", run.id, params.status.word());
+        Ok(run)
+    }
+
+    pub fn list_messages(&self, params: ListMessagesParams) -> ListMessagesResult {
+        let st = self.lock();
+        let limit = params.limit.unwrap_or(100);
+        ListMessagesResult { messages: st.messages.iter().rev().take(limit).cloned().collect(), unread: unread(&st) }
+    }
+
+    /// Without ids: every message.
+    pub fn read_messages(&self, params: MessageIdsParams) -> ApiResult<MessagesChangedResult> {
+        let mut st = self.lock();
+        let wanted = |m: &Message| params.ids.as_ref().is_none_or(|ids| ids.contains(&m.id));
+        let changed: Vec<u64> = st.messages.iter().filter(|m| !m.read && wanted(m)).map(|m| m.id).collect();
+        if !changed.is_empty() {
+            st.messages.iter_mut().filter(|m| changed.contains(&m.id)).for_each(|m| m.read = true);
+            if let Err(e) = self.save_messages(&st) {
+                st.messages.iter_mut().filter(|m| changed.contains(&m.id)).for_each(|m| m.read = false);
+                return Err(e);
+            }
+        }
+        Ok(MessagesChangedResult { changed: changed.len(), unread: unread(&st) })
+    }
+
+    /// Without ids: every message.
+    pub fn remove_messages(&self, params: MessageIdsParams) -> ApiResult<MessagesChangedResult> {
+        let mut st = self.lock();
+        let before = st.messages.clone();
+        st.messages.retain(|m| params.ids.as_ref().is_some_and(|ids| !ids.contains(&m.id)));
+        let changed = before.len() - st.messages.len();
+        if changed > 0
+            && let Err(e) = self.save_messages(&st)
+        {
+            st.messages = before;
+            return Err(e);
+        }
+        Ok(MessagesChangedResult { changed, unread: unread(&st) })
+    }
+
     // MARK: Secrets
 
     fn save_secrets(&self, st: &State) -> ApiResult<()> {
@@ -1371,6 +1480,10 @@ fn find_usage(
 
 fn file_size(path: &str) -> u64 {
     fs::metadata(path).map_or(0, |m| m.len())
+}
+
+fn unread(st: &State) -> usize {
+    st.messages.iter().filter(|m| !m.read).count()
 }
 
 /// The space of all run logs. A run that is still going has no

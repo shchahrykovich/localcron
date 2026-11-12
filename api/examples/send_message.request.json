@@ -1,0 +1,8 @@
+{
+  "id": 1,
+  "method": "send_message",
+  "params": {
+    "run_id": "backup.12",
+    "text": "The backup disk is 95% full. The next backup will fail; delete old snapshots in /Volumes/Backup."
+  }
+}

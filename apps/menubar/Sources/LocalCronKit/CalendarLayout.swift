@@ -9,7 +9,7 @@ public enum RunMark: String, CaseIterable, Sendable {
     case succeeded, failed, timedOut, stopped, working, planned
 
     public init(_ run: Run) {
-        switch run.status {
+        switch run.shownStatus {
         case .succeeded: self = .succeeded
         case .failed: self = .failed
         case .timedOut: self = .timedOut

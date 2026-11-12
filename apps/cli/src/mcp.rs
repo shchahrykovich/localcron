@@ -6,11 +6,13 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use localcron_core::api::{
-    CancelRunParams, Empty, GetRunLogParams, IdParams, ListRunsParams, PreviewScheduleParams, RunJobParams, SetConfigParams, SetJobEnabledParams, SetJobParams,
+    CancelRunParams, Empty, GetRunLogParams, IdParams, ListRunsParams, PreviewScheduleParams, RunJobParams, SendMessageParams, SetConfigParams,
+    SetJobEnabledParams, SetJobParams, SetRunStatusParams,
 };
 use localcron_core::instance::Instance;
 use localcron_core::job::{DEFAULT_TIMEOUT_SECS, Job, JobKind};
 use localcron_core::note;
+use localcron_core::run::{RUN_ID_VARS, ReportedStatus};
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig};
@@ -189,6 +191,47 @@ pub struct PreviewArgs {
 #[serde(deny_unknown_fields)]
 pub struct NoArgs {}
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SendMessageArgs {
+    /// What the user must know or do, in plain words, at most 2000 characters: "The backup disk is 95% full; the
+    /// next backup will fail. Delete old snapshots in /Volumes/Backup." Details go in the run's output.
+    pub text: String,
+    /// The run. Default: $LOCALCRON_RUN_ID of this server. Give it when the tool says it is missing: read it with
+    /// `echo $LOCALCRON_RUN_ID` in the run's shell.
+    #[serde(default)]
+    pub run_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RunStatusArgs {
+    /// "success": the work was done. "error": the work was not done or went wrong, even when nothing crashed.
+    pub status: String,
+    /// One line for the user: what went wrong, or what was done. At most 500 characters.
+    #[serde(default)]
+    pub note: Option<String>,
+    /// The run. Default: $LOCALCRON_RUN_ID of this server, as in send_message.
+    #[serde(default)]
+    pub run_id: Option<String>,
+}
+
+/// The run id: the one given, or the one in the environment of this process.
+pub fn current_run_id(given: Option<String>, var: impl Fn(&str) -> Option<String>) -> Result<String, String> {
+    if let Some(id) = given.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+        return Ok(id);
+    }
+    RUN_ID_VARS.iter().find_map(|name| var(name).filter(|v| !v.is_empty())).ok_or_else(|| {
+        "no run id: this works only inside a LocalCron run, which sets LOCALCRON_RUN_ID. An agent that does not pass its \
+         environment to MCP servers (Codex) reads it with `echo $LOCALCRON_RUN_ID` and gives it as run_id"
+            .to_string()
+    })
+}
+
+fn env_var(name: &str) -> Option<String> {
+    std::env::var(name).ok()
+}
+
 #[derive(Clone)]
 pub struct LocalCronMcp {
     socket: PathBuf,
@@ -299,6 +342,32 @@ sets or returns a value.")]
         Ok(self.call("list_secrets", Empty {}).await)
     }
 
+    #[tool(description = "Inside a scheduled run only: send the user a message, shown in the menu bar app, whose icon \
+gets a dot until the user reads it. Only for what the user must know or do: a problem they must fix, a decision, \
+something that will break. A run that went as planned sends none; a run sends at most 3. Not for progress or a \
+summary of normal work: that goes in the run's output.")]
+    async fn send_message(&self, Parameters(args): Parameters<SendMessageArgs>) -> Result<CallToolResult, ErrorData> {
+        Ok(match current_run_id(args.run_id, env_var) {
+            Ok(run_id) => self.call("send_message", SendMessageParams { run_id, text: args.text }).await,
+            Err(e) => error_result(e),
+        })
+    }
+
+    #[tool(description = "Inside a scheduled run only: say how the run's work went, apart from its exit code, which \
+only says that the program ended. \"error\" when the work was not done or went wrong (tests fail, data missing, a \
+service was down), \"success\" when it was done. The menu bar app shows it on the run, and an error as a failed \
+run. Call it once at the end; a second call replaces the first.")]
+    async fn set_run_status(&self, Parameters(args): Parameters<RunStatusArgs>) -> Result<CallToolResult, ErrorData> {
+        let status = match ReportedStatus::parse(args.status.trim()) {
+            Ok(s) => s,
+            Err(e) => return Ok(error_result(e)),
+        };
+        Ok(match current_run_id(args.run_id, env_var) {
+            Ok(run_id) => self.call("set_run_status", SetRunStatusParams { run_id, status, note: args.note.unwrap_or_default() }).await,
+            Err(e) => error_result(e),
+        })
+    }
+
     #[tool(description = "Daemon version, number of jobs, runs in progress and queued, the most runs at once, \
 paused, and the next run.")]
     async fn status(&self, Parameters(_): Parameters<NoArgs>) -> Result<CallToolResult, ErrorData> {
@@ -350,6 +419,16 @@ mod tests {
         let bad: Result<AddJobArgs, _> = serde_json::from_value(serde_json::json!({"id": "a", "schedule": "@daily",
             "kind": "shell", "command": "ls", "secrets": {"github-token": "ghp_x"}}));
         assert!(bad.is_err());
+    }
+
+    #[test]
+    fn the_run_id_comes_from_the_argument_then_from_either_variable() {
+        let none = |_: &str| None;
+        assert_eq!(current_run_id(Some(" a.1 ".into()), |_| Some("b.2".into())).unwrap(), "a.1");
+        assert_eq!(current_run_id(None, |n| (n == "LOCAL_CRON_RUN_ID").then(|| "c.3".into())).unwrap(), "c.3");
+        assert_eq!(current_run_id(None, |n| (n == "LOCALCRON_RUN_ID").then(|| "d.4".into())).unwrap(), "d.4");
+        assert!(current_run_id(Some("".into()), none).unwrap_err().contains("echo $LOCALCRON_RUN_ID"));
+        assert!(current_run_id(None, |_| Some(String::new())).is_err());
     }
 
     #[test]

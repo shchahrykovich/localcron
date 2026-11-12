@@ -31,6 +31,8 @@ enum Theme {
     static let neutralLine = Color(light: 0xDADAD5, dark: 0x4A4A4F)
     static let stopped = Color(light: 0xA1A1A6, dark: 0x8E8E93)
     static let planned = Color(light: 0xD6D5F0, dark: 0x4A4775)
+    /// An unread message: the same blue as the dot on the menu bar icon.
+    static let unread = Color(nsColor: .systemBlue)
 
     /// The window's background. Solid: the popover's own material is almost
     /// clear on macOS 26, and the page behind it showed through.
@@ -454,7 +456,7 @@ enum JobDot {
     init(_ job: JobView) {
         if job.activeRun != nil { self = .running }
         else if job.secretsAllowed == false { self = .waiting }
-        else if job.lastRun?.status.isFailure == true { self = .failed }
+        else if job.lastRun?.failed == true { self = .failed }
         else if job.job.enabled { self = .on }
         else { self = .off }
     }

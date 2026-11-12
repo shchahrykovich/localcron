@@ -154,6 +154,9 @@ struct MainView: View {
             case .jobs:
                 SmallButton("+ New Job", prominent: true) { model.newJob() }
                     .keyboardShortcut("n")
+                if !model.jobs.isEmpty {
+                    SmallButton("Open Week View") { model.openWeek() }
+                }
             case .runs where model.runsMode == .calendar:
                 SmallButton("Open Week View") { model.openWeek() }
             case .secrets:

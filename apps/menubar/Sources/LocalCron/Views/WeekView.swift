@@ -1,8 +1,9 @@
 import LocalCronKit
 import SwiftUI
 
-/// The week window: a column for each day, a block for each run at its time,
-/// planned runs dashed. A click on a block shows that run on the right.
+/// The Calendar tab of the Runs window: a column for each day, a block for
+/// each run at its time, planned runs dashed. A click on a block shows that
+/// run on the right; Show Log opens its log in the Logs tab.
 struct WeekView: View {
     @Environment(AppModel.self) private var model
     let perform: (AppMenu.Action) -> Void
@@ -47,12 +48,6 @@ struct WeekView: View {
                 .frame(width: 260)
                 .background(Theme.ground)
         }
-        .task {
-            while !Task.isCancelled {
-                await model.loadHistory()
-                try? await Task.sleep(for: .seconds(30))
-            }
-        }
     }
 
     private var mondayCalendar: Calendar {
@@ -70,6 +65,8 @@ struct WeekView: View {
 
     private func toolbar(_ dates: [Date]) -> some View {
         HStack(spacing: 8) {
+            RunsWindowTabs()
+            Spacer().frame(width: 6)
             HStack(spacing: 0) {
                 IconButton(symbol: "chevron.left", help: days == 7 ? "Previous week" : "Previous day", size: 26) { move(-1) }
                 Button("Today") { anchor = Date() }.buttonStyle(.plain).font(.system(size: 12)).padding(.horizontal, 10)

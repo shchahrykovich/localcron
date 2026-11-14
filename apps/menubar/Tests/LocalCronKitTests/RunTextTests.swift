@@ -65,6 +65,16 @@ final class RunTextTests: XCTestCase {
         XCTAssertEqual(runs.filter(RunFilter.working.matches).map(\.id), ["a.3"])
     }
 
+    func testTheFilterKeepsMatchingJobsInOrder() {
+        let runs = [makeRun("deps-check.2", .failed, start: "2026-10-30T10:00:00Z"),
+                    makeRun("wiki-drafts.5", .succeeded, start: "2026-10-30T09:00:00Z"),
+                    makeRun("deps-check.1", .succeeded, start: "2026-10-30T08:00:00Z")]
+        XCTAssertEqual(RunFilter.all.apply(runs, query: "").map(\.id), ["deps-check.2", "wiki-drafts.5", "deps-check.1"])
+        XCTAssertEqual(RunFilter.all.apply(runs, query: " DEPS ").map(\.id), ["deps-check.2", "deps-check.1"])
+        XCTAssertEqual(RunFilter.failed.apply(runs, query: "deps").map(\.id), ["deps-check.2"])
+        XCTAssertEqual(RunFilter.failed.apply(runs, query: "wiki").map(\.id), [])
+    }
+
     func testJobsGroupByFolderWithASummary() throws {
         func job(_ id: String, dir: String, enabled: Bool = true, running: Bool = false, next: String? = nil) throws -> JobView {
             let active = running ? #","active_run":{"id":"\#(id).1","job_id":"\#(id)","trigger":"manual","status":"running","queued_at":"2026-10-30T10:00:00Z"}"# : ""

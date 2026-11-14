@@ -32,7 +32,11 @@ final class AppModel {
         case tabs
         case editor(JobDraft)
         case secretEditor(SecretDraft)
-        case log(runID: String)
+    }
+
+    /// The tabs of the Runs window: the calendar, or every log.
+    enum RunsWindowTab: String, CaseIterable, Hashable {
+        case calendar = "Calendar", logs = "Logs"
     }
 
     let client = DaemonClient()
@@ -78,8 +82,15 @@ final class AppModel {
     private var scheduleTimes: [String: [Date]] = [:]
     private var plannedFor: [String: String] = [:]
     private var plannedAt = Date.distantPast
-    /// Many more runs than `runs`, for the calendars. Loaded while one is shown.
+    /// Many more runs than `runs`, for the calendars and the Logs tab.
+    /// Loaded while one is shown.
     var history: [Run] = []
+    /// The Runs window: its tab, the run whose log the Logs tab shows, and
+    /// the filters of its list.
+    var runsWindowTab: RunsWindowTab = .calendar
+    var logRunID: String?
+    var logFilter: RunFilter = .all
+    var logJobFilter = ""
     /// The Usage view: how far back, which tokens, and one job or all.
     var usagePeriod: UsagePeriod = .month
     var usageMetric: TokenMetric = .all
@@ -536,8 +547,23 @@ final class AppModel {
         showLog(runID: run.id)
     }
 
+    /// The Runs window at the calendar.
+    func showCalendar() {
+        runsWindowTab = .calendar
+        openWeek()
+    }
+
+    /// The Runs window at the Logs tab, with the run chosen last.
+    func showLogs() {
+        runsWindowTab = .logs
+        openWeek()
+    }
+
+    /// The Runs window at the Logs tab, with this run's log.
     func showLog(runID: String) {
-        page = .log(runID: runID)
+        logRunID = runID
+        runsWindowTab = .logs
+        openWeek()
     }
 
     func revealLog(_ run: Run) {

@@ -1,8 +1,9 @@
 import LocalCronKit
 import SwiftUI
 
-/// The popover: a header, the tabs, and a footer. The editor and a run log
-/// take the place of the header and the tabs.
+/// The popover: a header, the tabs, and a footer. The job and secret editors
+/// take the place of the header and the tabs. A run's log opens in the Runs
+/// window.
 struct MainView: View {
     @Environment(AppModel.self) private var model
     /// Runs a command of the "…" menu (StatusItemController).
@@ -37,8 +38,6 @@ struct MainView: View {
             case let .secretEditor(draft):
                 SecretEditorView(draft: draft)
                     .id(draft.isNew ? "new-secret" : "secret-\(draft.name)")
-            case let .log(runID):
-                RunLogView(runID: runID).id(runID)
             }
             Rectangle().fill(Theme.line).frame(height: 0.5)
             footer
@@ -162,10 +161,12 @@ struct MainView: View {
                 SmallButton("+ New Job", prominent: true) { model.newJob() }
                     .keyboardShortcut("n")
                 if !model.jobs.isEmpty {
-                    SmallButton("Open Week View") { model.openWeek() }
+                    SmallButton("Open Week View") { model.showCalendar() }
                 }
             case .runs where model.runsMode == .calendar:
-                SmallButton("Open Week View") { model.openWeek() }
+                SmallButton("Open Week View") { model.showCalendar() }
+            case .runs where model.runsMode == .list:
+                SmallButton("Open All Logs") { model.showLogs() }
             case .secrets:
                 SmallButton("+ New Secret", prominent: true) { model.newSecret() }
             case .messages where !model.messages.isEmpty:

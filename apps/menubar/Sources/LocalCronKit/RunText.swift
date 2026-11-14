@@ -122,6 +122,13 @@ public enum RunFilter: String, CaseIterable, Identifiable, Sendable {
         case .working: !run.status.isFinished
         }
     }
+
+    /// The runs this filter keeps whose job id contains `query`, in any
+    /// case; an empty query keeps every job. Order stays.
+    public func apply(_ runs: [Run], query: String) -> [Run] {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        return runs.filter { matches($0) && (q.isEmpty || $0.jobId.lowercased().contains(q)) }
+    }
 }
 
 /// Runs of one day, newest first.

@@ -51,8 +51,7 @@ struct RunList: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        let query = model.runJobFilter.trimmingCharacters(in: .whitespaces).lowercased()
-        let runs = model.runs.filter { model.runFilter.matches($0) && (query.isEmpty || $0.jobId.contains(query)) }
+        let runs = model.runFilter.apply(model.runs, query: model.runJobFilter)
         if runs.isEmpty {
             VStack(spacing: 6) {
                 Spacer()
@@ -84,9 +83,12 @@ struct RunList: View {
     }
 }
 
+/// A run in a list. A click opens its log in the Runs window.
 struct RunRow: View {
     @Environment(AppModel.self) private var model
     let run: Run
+    /// Its log is the one shown (the Logs tab).
+    var selected = false
     @State private var hovering = false
 
     var body: some View {
@@ -121,7 +123,8 @@ struct RunRow: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .background(hovering ? Theme.rowHover : run.failed || line.tone == .danger ? Theme.dangerRow : .clear)
+            .background(selected ? Theme.accentSoft : hovering ? Theme.rowHover
+                        : run.failed || line.tone == .danger ? Theme.dangerRow : .clear)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -396,144 +399,4 @@ private struct PlannedMark: View {
         guard let job = model.job(mark.jobID) else { return }
         Task { await model.runNow(job, early: early) }
     }
-}
-
-/// The output of one run. Refreshes itself while the run is not finished.
-struct RunLogView: View {
-    @Environment(AppModel.self) private var model
-    let runID: String
-    @State private var log: GetRunLogResult?
-    @State private var error: String?
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Button {
-                    model.page = .tabs
-                } label: {
-                    Label("Runs", systemImage: "chevron.left").font(.system(size: 12, weight: .medium))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(Theme.accent)
-                Spacer()
-                VStack(spacing: 0) {
-                    Text(log?.run.jobId ?? runID).font(.system(size: 13, weight: .semibold))
-                    if let at = log?.run.shownAt {
-                        Text(Formatting.past(at, now: model.now).capitalizedFirst).font(.system(size: 11)).foregroundStyle(.secondary)
-                    }
-                }
-                Spacer()
-                IconButton(symbol: "arrow.clockwise", help: "Refresh") { Task { await load() } }
-            }
-            .padding(.horizontal, 14)
-            .padding(.top, 10)
-            .padding(.bottom, 10)
-            if let log {
-                content(log)
-            } else if let error {
-                Text(error).foregroundStyle(Theme.dangerText).padding()
-                Spacer()
-            } else {
-                ProgressView().padding()
-                Spacer()
-            }
-        }
-        .task {
-            while !Task.isCancelled {
-                await load()
-                if log?.run.status.isFinished == true { break }
-                try? await Task.sleep(for: .seconds(2))
-            }
-        }
-    }
-
-    private func content(_ log: GetRunLogResult) -> some View {
-        let run = log.run
-        let job = model.job(run.jobId)
-        let line = RunText.line(run, now: model.now)
-        return VStack(spacing: 10) {
-            Card(padding: 12) {
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(spacing: 8) {
-                        Chip(text: run.shownStatus.title, kind: run.shownStatus.chip)
-                        Text(line.text).font(.system(size: 12)).foregroundStyle(line.tone == .plain ? .primary : line.tone.color)
-                            .lineLimit(2)
-                        Spacer()
-                        if !run.status.isFinished {
-                            if run.console != nil { SmallButton("Terminal") { model.openTerminal(run) } }
-                            SmallButton("Stop") { Task { await model.cancel(run) } }
-                        } else if let job {
-                            SmallButton("Run Again") { Task { await model.runNow(job) } }
-                        }
-                    }
-                    RowDivider()
-                    detail("Started by", RunText.startedBy(run, scheduleText: job?.scheduleText))
-                    if let job {
-                        detail(job.job.kind == .shell ? "Command" : "Prompt", (job.job.kind == .shell ? job.job.command : job.job.prompt) ?? "",
-                               mono: job.job.kind == .shell)
-                        detail("Folder", JobGroups.tilde(job.job.dir))
-                    }
-                    if let usage = run.usage {
-                        detail("Tokens", RunText.tokens(usage))
-                    }
-                    if let session = run.sessionId, job?.job.kind == .claude {
-                        HStack(alignment: .center, spacing: 8) {
-                            Text("Session").font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 72, alignment: .leading)
-                            CopyLine(text: "claude --resume \(session)")
-                                .help("Open this session again in Claude Code, in the job's folder")
-                        }
-                    }
-                }
-            }
-            HStack {
-                Text("Output").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                Text(outputNote(log)).font(.system(size: 11)).foregroundStyle(.secondary)
-                Spacer()
-                LinkButton("Reveal in Finder") { model.revealLog(run) }
-                LinkButton("Open in Console") { model.openLogInConsole(run) }
-            }
-            .padding(.horizontal, 4)
-            ScrollView([.vertical, .horizontal]) {
-                Text(log.text)
-                    .font(.system(size: 11, design: .monospaced))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(10)
-            }
-            .defaultScrollAnchor(.bottom)
-            .background(Theme.card, in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.line, lineWidth: 0.5))
-        }
-        .padding(.horizontal, 14)
-        .padding(.bottom, 12)
-    }
-
-    private func detail(_ title: String, _ value: String, mono: Bool = false) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(title).font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 72, alignment: .leading)
-            Text(value).font(mono ? Theme.mono : .system(size: 12)).lineLimit(3).textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    /// "214 lines, the end is shown".
-    private func outputNote(_ log: GetRunLogResult) -> String {
-        let lines = log.text.split(separator: "\n", omittingEmptySubsequences: false).count
-        return log.truncated ? "the end of \(Formatting.bytes(log.size)) is shown" : "\(lines) lines"
-    }
-
-    private func load() async {
-        switch await model.log(runID) {
-        case let .success(l):
-            log = l
-            error = nil
-        case let .failure(e):
-            error = e.localizedDescription
-        }
-    }
-}
-
-extension String {
-    /// "today 09:00" → "Today 09:00".
-    var capitalizedFirst: String { prefix(1).uppercased() + dropFirst() }
 }

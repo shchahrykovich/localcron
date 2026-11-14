@@ -47,7 +47,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         }
         weekWindow = AppWindow(title: "\(Instance.current.appName) Runs", size: NSSize(width: 1120, height: 700),
                                minSize: NSSize(width: 760, height: 480)) { [model] in
-            AnyView(WindowFrame { WeekView(perform: windowPerform) }.environment(model))
+            AnyView(WindowFrame { RunsWindowView(perform: windowPerform) }.environment(model))
         }
         model.openSettings = { [weak self] page in self?.showSettings(page) }
         model.openWeek = { [weak self] in
@@ -257,8 +257,8 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         case .stopAllRuns:
             Task { @MainActor in await model.stopAll() }
         case let .showLog(runID):
-            model.showLog(runID: runID)
-            DispatchQueue.main.async { self.showWindow() }
+            // The Runs window, at the Logs tab.
+            DispatchQueue.main.async { self.model.showLog(runID: runID) }
         case let .allowSecrets(jobID):
             guard let job = model.jobs.first(where: { $0.id == jobID }) else { return }
             Task { @MainActor in

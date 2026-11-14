@@ -10,7 +10,7 @@ use chrono::{DateTime, FixedOffset};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::job::Job;
+use crate::job::{Job, SecretScope};
 use crate::message::Message;
 use crate::run::{ReportedStatus, Run};
 
@@ -171,6 +171,16 @@ pub struct JobView {
     /// to read its secrets as it is now. Its runs fail until then.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub secrets_allowed: Option<bool>,
+    /// For a job that waits for a new approval because what it runs changed:
+    /// what the user allowed the last time, so the app can show the change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_before: Option<PastApproval>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PastApproval {
+    pub allowed_at: DateTime<FixedOffset>,
+    pub job: SecretScope,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

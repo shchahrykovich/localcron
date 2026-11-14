@@ -446,14 +446,14 @@ final class AppModel {
             failed: !result.usedBy.isEmpty)
     }
 
-    /// The user reads what the job runs, confirms, and proves it is them
+    /// The user reads what the job runs and what changed since the last OK,
+    /// with Claude's review beside it, confirms, and proves it is them
     /// (Touch ID or the Mac password). Then the job as shown is allowed.
     /// True when it is allowed now.
     @discardableResult
     func allowSecrets(_ job: JobView) async -> Bool {
         let j = job.job
-        let approval = SecretApproval(job: j)
-        guard confirm(approval.title, approval.summary, details: approval.details, button: "Allow…") else { return false }
+        guard await SecretApprovalWindow.ask(SecretApproval(job)) else { return false }
         let context = LAContext()
         do {
             guard try await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "allow the job \(j.id) to read its secrets")

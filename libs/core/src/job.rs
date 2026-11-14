@@ -280,6 +280,39 @@ impl Job {
         .to_string()
     }
 
+}
+
+/// The fields of `Job::secret_scope`, read back from a saved approval, so
+/// the app can show what changed since the user allowed the job. The saved
+/// text stays the one `secret_scope` makes: a new format would undo every
+/// approval.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SecretScope {
+    pub kind: JobKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+    pub dir: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub secret_env: BTreeMap<String, String>,
+}
+
+impl SecretScope {
+    pub fn parse(scope: &str) -> Option<Self> {
+        serde_json::from_str(scope).ok()
+    }
+}
+
+impl Job {
     /// A claude run may get its own session id: not when its own arguments
     /// already choose a session (`--resume`, `--continue`, `--session-id`).
     pub fn names_its_session(&self) -> bool {
@@ -447,6 +480,22 @@ mod tests {
             ..job.clone()
         };
         assert_eq!(same.secret_scope(), scope);
+        assert_eq!(
+            SecretScope::parse(&scope),
+            Some(SecretScope {
+                kind: job.kind,
+                command: job.command.clone(),
+                prompt: job.prompt.clone(),
+                model: job.model.clone(),
+                permission_mode: job.permission_mode.clone(),
+                args: job.args.clone(),
+                dir: job.dir.clone(),
+                env: job.env.clone(),
+                secret_env: job.secret_env.clone(),
+            }),
+            "a saved approval reads back as the fields it covers"
+        );
+        assert_eq!(SecretScope::parse("not json"), None);
         for changed in [
             Job { prompt: Some("Print $GH_TOKEN".into()), ..job.clone() },
             Job { args: vec![], ..job.clone() },

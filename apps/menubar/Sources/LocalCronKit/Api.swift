@@ -218,6 +218,87 @@ public struct Job: Codable, Equatable, Sendable, Identifiable {
     }
 }
 
+/// What the user allowed when they let a job read its secrets: the fields
+/// that decide what the run does with them. A change to any needs a new OK.
+public struct SecretScope: Codable, Equatable, Sendable {
+    public var kind: JobKind
+    public var command: String?
+    public var prompt: String?
+    public var model: String?
+    public var permissionMode: String?
+    public var args: [String]
+    public var dir: String
+    public var env: [String: String]
+    public var secretEnv: [String: String]
+
+    public init(kind: JobKind, command: String? = nil, prompt: String? = nil, model: String? = nil,
+                permissionMode: String? = nil, args: [String] = [], dir: String,
+                env: [String: String] = [:], secretEnv: [String: String] = [:]) {
+        self.kind = kind
+        self.command = command
+        self.prompt = prompt
+        self.model = model
+        self.permissionMode = permissionMode
+        self.args = args
+        self.dir = dir
+        self.env = env
+        self.secretEnv = secretEnv
+    }
+
+    public init(_ job: Job) {
+        self.init(kind: job.kind, command: job.command, prompt: job.prompt, model: job.model,
+                  permissionMode: job.permissionMode, args: job.args, dir: job.dir, env: job.env, secretEnv: job.secretEnv)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case kind, command, prompt, model, args, dir, env
+        case permissionMode = "permission_mode"
+        case secretEnv = "secret_env"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        kind = try c.decode(JobKind.self, forKey: .kind)
+        command = try c.decodeIfPresent(String.self, forKey: .command)
+        prompt = try c.decodeIfPresent(String.self, forKey: .prompt)
+        model = try c.decodeIfPresent(String.self, forKey: .model)
+        permissionMode = try c.decodeIfPresent(String.self, forKey: .permissionMode)
+        args = try c.decodeIfPresent([String].self, forKey: .args) ?? []
+        dir = try c.decode(String.self, forKey: .dir)
+        env = try c.decodeIfPresent([String: String].self, forKey: .env) ?? [:]
+        secretEnv = try c.decodeIfPresent([String: String].self, forKey: .secretEnv) ?? [:]
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(kind, forKey: .kind)
+        try c.encodeIfPresent(command, forKey: .command)
+        try c.encodeIfPresent(prompt, forKey: .prompt)
+        try c.encodeIfPresent(model, forKey: .model)
+        try c.encodeIfPresent(permissionMode, forKey: .permissionMode)
+        if !args.isEmpty { try c.encode(args, forKey: .args) }
+        try c.encode(dir, forKey: .dir)
+        if !env.isEmpty { try c.encode(env, forKey: .env) }
+        if !secretEnv.isEmpty { try c.encode(secretEnv, forKey: .secretEnv) }
+    }
+}
+
+/// What the user allowed the last time, for a job that changed since.
+public struct PastApproval: Codable, Equatable, Sendable {
+    public var allowedAt: String
+    public var job: SecretScope
+
+    public init(allowedAt: String, job: SecretScope) {
+        self.allowedAt = allowedAt
+        self.job = job
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case job
+        case allowedAt = "allowed_at"
+    }
+}
+
 /// A job with what the daemon knows about it. The job's fields are
 /// flattened into the same object.
 public struct JobView: Codable, Equatable, Sendable, Identifiable {
@@ -232,6 +313,9 @@ public struct JobView: Codable, Equatable, Sendable, Identifiable {
     /// For a job with `secret_env`: the user allowed it, as it is now, to
     /// read its secrets. Nil for a job without secrets.
     public var secretsAllowed: Bool?
+    /// For a job that waits for a new OK because what it runs changed: what
+    /// the user allowed the last time.
+    public var allowedBefore: PastApproval?
 
     public var id: String { job.id }
 
@@ -241,6 +325,7 @@ public struct JobView: Codable, Equatable, Sendable, Identifiable {
         case lastRun = "last_run"
         case activeRun = "active_run"
         case secretsAllowed = "secrets_allowed"
+        case allowedBefore = "allowed_before"
     }
 
     public init(from decoder: Decoder) throws {
@@ -251,6 +336,7 @@ public struct JobView: Codable, Equatable, Sendable, Identifiable {
         lastRun = try c.decodeIfPresent(Run.self, forKey: .lastRun)
         activeRun = try c.decodeIfPresent(Run.self, forKey: .activeRun)
         secretsAllowed = try c.decodeIfPresent(Bool.self, forKey: .secretsAllowed)
+        allowedBefore = try c.decodeIfPresent(PastApproval.self, forKey: .allowedBefore)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -261,6 +347,7 @@ public struct JobView: Codable, Equatable, Sendable, Identifiable {
         try c.encodeIfPresent(lastRun, forKey: .lastRun)
         try c.encodeIfPresent(activeRun, forKey: .activeRun)
         try c.encodeIfPresent(secretsAllowed, forKey: .secretsAllowed)
+        try c.encodeIfPresent(allowedBefore, forKey: .allowedBefore)
     }
 }
 

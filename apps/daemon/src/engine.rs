@@ -22,13 +22,13 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, FixedOffset, Local, Timelike};
 use localcron_core::api::{
     self, AllowJobSecretsParams, ApiError, CancelRunResult, Config, ErrorCode, GetRunLogParams, GetRunLogResult, JobView, ListJobsResult, ListRunsParams,
-    ListRunsResult, ListSecretsResult, MissingSecret, NextRun, PreviewScheduleParams, PreviewScheduleResult, RemoveJobResult,
+    ListRunsResult, ListSecretsResult, MissingSecret, NextRun, PastApproval, PreviewScheduleParams, PreviewScheduleResult, RemoveJobResult,
     ListMessagesParams, ListMessagesResult, MessageIdsParams, MessagesChangedResult, RemoveSecretResult, RunJobParams, SecretInfo, SecretState,
     SendMessageParams, SetConfigParams, SetJobParams, SetJobResult, SetRunStatusParams, SetSecretParams, SetSecretResult, StatusResult,
 };
 use localcron_core::icon;
 use localcron_core::instance::Instance;
-use localcron_core::job::{Job, JobKind};
+use localcron_core::job::{Job, JobKind, SecretScope};
 use localcron_core::message::{self, Message};
 use localcron_core::paths::Paths;
 use localcron_core::run::{self as run_ids, Reported, Run, RunStatus, Trigger};
@@ -855,8 +855,17 @@ impl Engine {
 
     fn view(&self, st: &State, slot: &Slot) -> JobView {
         let mut runs = st.runs.iter().filter(|r| r.job_id == slot.job.id);
+        let secrets_allowed = (!slot.job.secret_env.is_empty()).then(|| Self::allowed(st, &slot.job));
+        let allowed_before = if secrets_allowed == Some(false) {
+            st.grants.get(&slot.job.id).and_then(|g| {
+                SecretScope::parse(&g.scope).map(|job| PastApproval { allowed_at: g.allowed_at, job })
+            })
+        } else {
+            None
+        };
         JobView {
-            secrets_allowed: (!slot.job.secret_env.is_empty()).then(|| Self::allowed(st, &slot.job)),
+            secrets_allowed,
+            allowed_before,
             job: slot.job.clone(),
             schedule_text: slot.schedule.describe(),
             next_run: slot.job.enabled.then_some(slot.next_due).flatten().map(|d| d.fixed_offset()),

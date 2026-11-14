@@ -38,16 +38,21 @@ public func commandLine(_ argv: [String]) -> String {
 public struct LoginShellRunner: CommandRunner {
     public var shell: String
     public var timeout: TimeInterval
+    /// The folder the program starts in; nil: the app's own.
+    public var directory: String?
 
-    public init(shell: String = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh", timeout: TimeInterval = 60) {
+    public init(shell: String = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh", timeout: TimeInterval = 60,
+                directory: String? = nil) {
         self.shell = shell.isEmpty ? "/bin/zsh" : shell
         self.timeout = timeout
+        self.directory = directory
     }
 
     public func run(_ argv: [String]) -> CommandOutput {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: shell)
         p.arguments = ["-l", "-i", "-c", commandLine(argv)]
+        if let directory { p.currentDirectoryURL = URL(fileURLWithPath: directory) }
         let pipe = Pipe()
         p.standardOutput = pipe
         p.standardError = pipe

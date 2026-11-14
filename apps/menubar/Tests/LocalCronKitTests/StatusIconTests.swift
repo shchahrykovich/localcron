@@ -111,4 +111,24 @@ final class StatusIconTests: XCTestCase {
         view.lastRun?.reported?.status = .success
         XCTAssertEqual(StatusIcon(status: try status(), jobs: [view]).state, .idle)
     }
+
+    func testADismissedFailureHidesUntilTheNextOne() throws {
+        let jobs = [try job("a", last: "failed"), try job("b", last: "failed")]
+        let some = StatusIcon(status: try status(), jobs: jobs, dismissed: ["a.1"])
+        XCTAssertEqual(some.failedJobs, ["b"])
+        XCTAssertEqual(StatusIcon(status: try status(), jobs: jobs, dismissed: ["a.1", "b.1"]).state, .idle)
+
+        // The next run of a fails again: a new run id, so it shows.
+        var again = jobs[0]
+        again.lastRun?.id = "a.2"
+        XCTAssertEqual(StatusIcon(status: try status(), jobs: [again, jobs[1]], dismissed: ["a.1", "b.1"]).failedJobs, ["a"])
+    }
+
+    func testDismissedRunsKeepOnlyTheLastRunsOfJobs() throws {
+        var a = try job("a", last: "succeeded")
+        a.lastRun?.id = "a.2"
+        let kept = DismissedFailures.prune(["a.1", "b.1", "gone.7"], jobs: [a, try job("b", last: "failed")])
+        XCTAssertEqual(kept, ["b.1"], "a.1 is no longer the last run; gone.7 belongs to no job")
+        XCTAssertEqual(DismissedFailures.ids(of: [a, try job("b", last: "failed"), try job("c", last: "timed_out")]), ["b.1", "c.1"])
+    }
 }

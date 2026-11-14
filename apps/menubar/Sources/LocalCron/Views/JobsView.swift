@@ -14,6 +14,7 @@ struct JobsView: View {
                 VStack(spacing: 12) {
                     TodayCard().zIndex(1) // its tooltip goes over the folders below
                     ForEach(model.jobs.filter { $0.secretsAllowed == false }) { WaitingBanner(job: $0) }
+                    if !model.failedJobs.isEmpty { FailedBanner(jobs: model.failedJobs) }
                     ForEach(JobGroups.byFolder(model.jobs)) { FolderSection(folder: $0) }
                 }
                 .padding(.horizontal, 14)
@@ -274,6 +275,58 @@ struct WaitingBanner: View {
     }
 }
 
+/// Jobs whose last run failed: the reason for the red mark on the icon.
+/// Dismiss hides the mark until a job fails again.
+struct FailedBanner: View {
+    @Environment(AppModel.self) private var model
+    let jobs: [JobView]
+
+    /// The job's own note when it reported the error, else how it ended.
+    static func why(_ run: Run) -> String {
+        if let note = run.reported?.note, !note.isEmpty { return note }
+        return run.exitCode.map { "exit \($0)" } ?? run.status.title.lowercased()
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "xmark.circle").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.dangerText)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(jobs.count == 1 ? "The last run of 1 job failed." : "The last run of \(jobs.count) jobs failed.")
+                    .font(.system(size: 12, weight: .semibold))
+                ForEach(jobs) { job in
+                    if let last = job.lastRun {
+                        Button {
+                            model.showLog(last)
+                        } label: {
+                            (Text(job.id).fontWeight(.medium) + Text(": " + Self.why(last)))
+                                .font(.system(size: 11)).lineLimit(2).multilineTextAlignment(.leading)
+                        }
+                        .buttonStyle(.plain)
+                        .pointingHandCursor()
+                        .help("Open the log of this run")
+                    }
+                }
+            }
+            .foregroundStyle(Theme.dangerText)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Button {
+                model.dismissFailures()
+            } label: {
+                Text("Dismiss").font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.dangerText)
+                    .padding(.horizontal, 10).padding(.vertical, 4)
+                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.dangerLine, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .help("Hide the red mark until a job fails again. The runs stay in Runs.")
+        }
+        .padding(.leading, 12)
+        .padding(.trailing, 8)
+        .padding(.vertical, 8)
+        .background(Theme.dangerSoft, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.dangerLine, lineWidth: 1))
+    }
+}
+
 /// The jobs of one folder: a header that folds them, and a card.
 struct FolderSection: View {
     @Environment(AppModel.self) private var model
@@ -350,7 +403,9 @@ struct JobRow: View {
             Button {
                 model.showLog(last)
             } label: {
-                Text(failedText(last)).font(.system(size: 11)).foregroundStyle(Theme.dangerText).lineLimit(1)
+                Text(failedText(last)).font(.system(size: 11))
+                    .foregroundStyle(model.dismissedRuns.contains(last.id) ? AnyShapeStyle(.secondary) : AnyShapeStyle(Theme.dangerText))
+                    .lineLimit(1)
             }
             .buttonStyle(.plain)
             .pointingHandCursor()

@@ -81,8 +81,9 @@ public struct StatusIcon: Equatable, Sendable {
     }
 
     /// `status` is nil when the daemon does not answer; then `jobs` is old
-    /// and only the problem is shown.
-    public init(status: StatusResult?, jobs: [JobView]) {
+    /// and only the problem is shown. A failed run in `dismissed` does not
+    /// count: the user saw it and hid it.
+    public init(status: StatusResult?, jobs: [JobView], dismissed: Set<String> = []) {
         guard let status else {
             self.init(down: true)
             return
@@ -90,7 +91,7 @@ public struct StatusIcon: Equatable, Sendable {
         let starts = jobs.compactMap { $0.activeRun?.status == .running ? ApiDate.parse($0.activeRun?.startedAt) : nil }
         self.init(running: status.running,
                   paused: status.paused,
-                  failedJobs: jobs.filter { $0.lastRun?.failed == true }.map(\.id),
+                  failedJobs: DismissedFailures.unseen(jobs, dismissed: dismissed).map(\.id),
                   waitingJobs: jobs.filter { $0.secretsAllowed == false }.map(\.id),
                   next: status.paused ? nil : ApiDate.parse(status.next?.at),
                   runningSince: starts.min(),
@@ -160,5 +161,27 @@ public struct StatusIcon: Equatable, Sendable {
         if !failedOnly.isEmpty { lines.append("The last run failed: \(failedOnly.joined(separator: ", "))") }
         if !down, !paused, let next { lines.append("Next run \(Formatting.next(next, now: now)).") }
         return lines.joined(separator: "\n")
+    }
+}
+
+/// Failed last runs the user hid with Dismiss, by run id. The red mark
+/// comes back when a job fails again: that is a new run with a new id.
+public enum DismissedFailures {
+    public static let defaultsKey = "dismissedFailedRuns"
+
+    /// Jobs whose last run failed and is not dismissed.
+    public static func unseen(_ jobs: [JobView], dismissed: Set<String>) -> [JobView] {
+        jobs.filter { job in job.lastRun.map { $0.failed && !dismissed.contains($0.id) } ?? false }
+    }
+
+    /// The run ids that Dismiss hides now.
+    public static func ids(of jobs: [JobView]) -> Set<String> {
+        Set(jobs.compactMap { job in job.lastRun.flatMap { $0.failed ? $0.id : nil } })
+    }
+
+    /// Only ids that are still a job's last run matter; the rest go, so the
+    /// saved set does not grow.
+    public static func prune(_ dismissed: Set<String>, jobs: [JobView]) -> Set<String> {
+        dismissed.intersection(jobs.compactMap(\.lastRun?.id))
     }
 }

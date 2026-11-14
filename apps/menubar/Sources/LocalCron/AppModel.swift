@@ -102,6 +102,10 @@ final class AppModel {
     var iconColor = UserDefaults.standard.object(forKey: IconStyle.colorKey) as? Bool ?? true {
         didSet { UserDefaults.standard.set(iconColor, forKey: IconStyle.colorKey) }
     }
+    /// Failed runs the user hid with Dismiss: no red mark for them.
+    var dismissedRuns = Set(UserDefaults.standard.stringArray(forKey: DismissedFailures.defaultsKey) ?? []) {
+        didSet { UserDefaults.standard.set(dismissedRuns.sorted(), forKey: DismissedFailures.defaultsKey) }
+    }
     /// Set by StatusItemController: they open its windows.
     var openSettings: (SettingsPage?) -> Void = { _ in }
     var openWeek: () -> Void = {}
@@ -112,7 +116,11 @@ final class AppModel {
     var windowOpen = false {
         didSet {
             if windowOpen && !oldValue {
-                if unreadMessages > 0, page == .tabs { tab = .messages }
+                if unreadMessages > 0, page == .tabs {
+                    tab = .messages
+                } else if !failedJobs.isEmpty, page == .tabs {
+                    tab = .jobs
+                }
                 pollNow()
             }
             if !windowOpen { newMessageIDs = [] }
@@ -136,7 +144,17 @@ final class AppModel {
     var paused: Bool { status?.paused ?? false }
     /// Queued and running runs: at most one per job.
     var activeRuns: [Run] { jobs.compactMap(\.activeRun) }
-    var statusIcon: StatusIcon { StatusIcon(status: status, jobs: jobs) }
+    var statusIcon: StatusIcon { StatusIcon(status: status, jobs: jobs, dismissed: dismissedRuns) }
+    /// Jobs whose last run failed, not dismissed, and not because they wait
+    /// for the user's OK (the waiting banner says that).
+    var failedJobs: [JobView] {
+        DismissedFailures.unseen(jobs, dismissed: dismissedRuns).filter { $0.secretsAllowed != false }
+    }
+
+    /// Hides the red mark until a job fails again. The runs stay in Runs.
+    func dismissFailures() {
+        dismissedRuns.formUnion(DismissedFailures.ids(of: failedJobs))
+    }
     var unreadMessages: Int { status?.unreadMessages ?? 0 }
 
     // MARK: Lifecycle
@@ -247,6 +265,8 @@ final class AppModel {
             let c = try await client.config()
             status = s
             jobs = j
+            let kept = DismissedFailures.prune(dismissedRuns, jobs: j)
+            if kept != dismissedRuns { dismissedRuns = kept }
             runs = r
             config = c
             // An older daemon has no secrets: not an error.
@@ -740,7 +760,7 @@ final class AppModel {
             return AppMenu.RunEntry(runID: run.id, jobID: run.jobId, detail: detail, console: run.console != nil)
         }
         let failed = status == nil ? [] : jobs.compactMap { job -> AppMenu.RunEntry? in
-            guard let last = job.lastRun, last.failed else { return nil }
+            guard let last = job.lastRun, last.failed, !dismissedRuns.contains(last.id) else { return nil }
             var parts: [String] = []
             if let at = last.shownAt { parts.append(Formatting.when(at, now: now)) }
             parts.append(!last.status.isFailure ? "reported an error" : last.exitCode.map { "exit \($0)" } ?? last.status.title.lowercased())

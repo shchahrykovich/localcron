@@ -68,8 +68,6 @@ final class AppModel {
     var runFilter: RunFilter = .all
     /// The Runs tab shows only jobs whose id contains this.
     var runJobFilter = ""
-    /// Folders the user closed in the Jobs tab.
-    var closedFolders: Set<String> = []
     /// The next times of each job that is on, for the Today strip and the
     /// calendars, from each job's next run on: a time a run early took is
     /// left out. The schedule times are read at most once a minute.
@@ -413,7 +411,6 @@ final class AppModel {
             say("\(job.id) saved: \(result.job.scheduleText)\(next).")
             page = .tabs
             tab = .jobs
-            closedFolders.remove(result.job.job.dir)
             if result.job.secretsAllowed == false {
                 await allowSecrets(result.job)
             }
@@ -610,25 +607,46 @@ final class AppModel {
                 failed: true)
             return
         }
+        open(command, runID: run.id, title: "\(run.id) console", dir: nil, note: nil, suffix: "",
+             done: "The console of \(run.id) opens in %@. Leave it with Ctrl-B, then D: the run goes on.")
+    }
+
+    /// Open a finished Claude run's session again, in the job's folder:
+    /// `claude --resume <session>` in a new terminal window.
+    func resume(_ run: Run) {
+        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+        guard let session = run.sessionId, let job = job(run.jobId),
+              let command = ConsoleScript.resumeCommand(session: session, shell: shell) else {
+            say("\(run.id) has no Claude session to resume.", failed: true)
+            return
+        }
+        open(command, runID: run.id, title: "\(run.id) resume", dir: job.job.dir, note: "Resume the session of \(run.id).",
+             suffix: "-resume", done: "The session of \(run.id) opens in %@.")
+    }
+
+    /// Run `command` in a new window of the chosen terminal; `done` has %@ for its name.
+    private func open(_ command: String, runID: String, title: String, dir: String?, note: String?, suffix: String,
+                      done: String) {
         if consoleTerminal == .kitty, let kitty = kittyURL {
             let process = Process()
             process.executableURL = kitty.appendingPathComponent("Contents/MacOS/kitty")
-            process.arguments = ConsoleTerminal.kittyArguments(command: command, runID: run.id)
+            process.arguments = ConsoleTerminal.kittyArguments(command: command, runID: runID, title: title, dir: dir)
             do {
                 try process.run()
-                say("The console of \(run.id) opens in kitty. Leave it with Ctrl-B, then D: the run goes on.")
+                say(done.replacingOccurrences(of: "%@", with: "kitty"))
             } catch {
                 say("Could not open kitty: \(error.localizedDescription)", failed: true)
             }
             return
         }
         do {
-            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("\(Instance.current.appName)-consoles")
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            NSWorkspace.shared.open(try ConsoleScript.write(runID: run.id, command: command, in: dir))
-            say("The console of \(run.id) opens in Terminal. Leave it with Ctrl-B, then D: the run goes on.")
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent("\(Instance.current.appName)-consoles")
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            NSWorkspace.shared.open(try ConsoleScript.write(runID: runID, command: command, in: folder, workDir: dir,
+                                                            note: note, suffix: suffix))
+            say(done.replacingOccurrences(of: "%@", with: "Terminal"))
         } catch {
-            say("Could not open the console of \(run.id): \(error.localizedDescription)", failed: true)
+            say("Could not open Terminal for \(runID): \(error.localizedDescription)", failed: true)
         }
     }
 
@@ -755,10 +773,6 @@ final class AppModel {
     var menuContext: AppMenu.Context {
         let now = Date()
         let summary = status.map { "\($0.enabledJobs) of \($0.jobs) on" + ($0.paused ? ", paused" : "") }
-        let running = activeRuns.map { run in
-            let detail = run.status == .queued ? "queued" : run.seconds(now: now).map { Formatting.duration($0) }
-            return AppMenu.RunEntry(runID: run.id, jobID: run.jobId, detail: detail, console: run.console != nil)
-        }
         let failed = status == nil ? [] : jobs.compactMap { job -> AppMenu.RunEntry? in
             guard let last = job.lastRun, last.failed, !dismissedRuns.contains(last.id) else { return nil }
             var parts: [String] = []
@@ -766,18 +780,12 @@ final class AppModel {
             parts.append(!last.status.isFailure ? "reported an error" : last.exitCode.map { "exit \($0)" } ?? last.status.title.lowercased())
             return AppMenu.RunEntry(runID: last.id, jobID: job.id, detail: parts.joined(separator: ", "))
         }
-        let upcoming = paused ? [] : jobs
-            .compactMap { job in ApiDate.parse(job.nextRun).map { (job.id, $0) } }
-            .filter { id, _ in job(id)?.job.enabled == true }
-            .sorted { $0.1 < $1.1 }
-            .prefix(3)
-            .map { id, at in AppMenu.UpcomingRun(jobID: id, detail: Formatting.soon(at, now: now), time: Formatting.clock(at)) }
         let waiting = status == nil ? [] : jobs.filter { $0.secretsAllowed == false }.map {
             AppMenu.WaitingJob(jobID: $0.id, secrets: Array(Set($0.job.secretEnv.values)).sorted())
         }
         return AppMenu.Context(appName: Instance.current.appName, cliInstalled: cliInstalled, summary: summary,
-                               paused: paused, running: running, failed: failed, waiting: waiting,
-                               upcoming: Array(upcoming), jobIDs: status == nil ? [] : jobs.map(\.id))
+                               paused: paused, failed: failed, waiting: waiting,
+                               jobIDs: status == nil ? [] : jobs.map(\.id))
     }
 
     // MARK: Updates

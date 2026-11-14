@@ -248,14 +248,6 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             DispatchQueue.main.async { self.showWindow() }
         case let .setPaused(paused):
             Task { @MainActor in await model.setPaused(paused) }
-        case let .stopRun(runID):
-            if let run = model.activeRuns.first(where: { $0.id == runID }) {
-                Task { @MainActor in await model.cancel(run) }
-            }
-        case let .openTerminal(runID):
-            if let run = model.activeRuns.first(where: { $0.id == runID }) { model.openTerminal(run) }
-        case .stopAllRuns:
-            Task { @MainActor in await model.stopAll() }
         case let .showLog(runID):
             // The Runs window, at the Logs tab.
             DispatchQueue.main.async { self.model.showLog(runID: runID) }
@@ -280,13 +272,6 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
                 await model.runNow(job, early: early)
                 if !fromWindow, model.messageFailed, let why = model.message { alert(.failed("\(jobID) did not start", why)) }
             }
-        case let .showRuns(jobID):
-            model.showRuns(jobID: jobID)
-            DispatchQueue.main.async { self.showWindow() }
-        case let .editJob(jobID):
-            guard let job = model.job(jobID) else { return }
-            model.edit(job)
-            DispatchQueue.main.async { self.showWindow() }
         case .copyMCPCommand: model.copy(model.mcpCommand)
         case .openLogsFolder: model.openLogsFolder()
         case .openHelp: model.openHelp()

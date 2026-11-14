@@ -53,6 +53,7 @@ final class SecretApprovalWindow: NSObject, NSWindowDelegate {
 
     private func show() {
         window.center()
+        DockPresence.windowWillShow()
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
     }

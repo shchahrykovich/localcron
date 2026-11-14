@@ -30,6 +30,7 @@ final class AppWindow {
         window.contentViewController = NSHostingController(rootView: content())
         window.setContentSize(size)
         window.center()
+        DockPresence.windowWillShow()
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
     }

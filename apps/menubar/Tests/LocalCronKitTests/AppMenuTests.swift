@@ -30,11 +30,11 @@ final class AppMenuTests: XCTestCase {
         return nil
     }
 
-    private func context(paused: Bool = false, running: [AppMenu.RunEntry] = [], failed: [AppMenu.RunEntry] = [],
-                         waiting: [AppMenu.WaitingJob] = [], upcoming: [AppMenu.UpcomingRun] = [], jobIDs: [String] = [],
+    private func context(paused: Bool = false, failed: [AppMenu.RunEntry] = [],
+                         waiting: [AppMenu.WaitingJob] = [], jobIDs: [String] = [],
                          daemon: Bool = true) -> AppMenu.Context {
         AppMenu.Context(appName: "LocalCron", cliInstalled: false, summary: daemon ? "2 jobs" : nil, paused: paused,
-                        running: running, failed: failed, waiting: waiting, upcoming: upcoming, jobIDs: jobIDs)
+                        failed: failed, waiting: waiting, jobIDs: jobIDs)
     }
 
     func testEntries() {
@@ -50,21 +50,16 @@ final class AppMenuTests: XCTestCase {
         XCTAssertTrue(titles(entries).contains("Help"), "not \"LocalCron Help\"")
     }
 
-    func testTheNextRunsEachHaveASubmenuToRunThemNow() throws {
-        let upcoming = [AppMenu.UpcomingRun(jobID: "pr-review", detail: "12:00, in 1 h 20 min", time: "12:00"),
-                        AppMenu.UpcomingRun(jobID: "nightly-tests", detail: "tomorrow 02:00", time: "02:00")]
-        let entries = AppMenu.entries(context(upcoming: upcoming, jobIDs: ["nightly-tests", "pr-review", "release"]))
+    func testTheMenuDoesNotListRunningOrNextRuns() throws {
+        // The popover and the Runs window show them; the menu only offers to run a job.
+        let entries = AppMenu.entries(context(jobIDs: ["nightly-tests", "pr-review"]))
         let list = titles(entries)
-        let start = try XCTUnwrap(list.firstIndex(of: "# Next to run"))
-        XCTAssertEqual(Array(list[start...].prefix(4)), ["# Next to run", "pr-review ▸", "nightly-tests ▸", "Run a Job Now ▸"])
-        let pr = try XCTUnwrap(submenu("pr-review", in: entries))
-        XCTAssertEqual(pr.detail, "12:00, in 1 h 20 min")
-        XCTAssertEqual(allItems(pr.entries).map(\.title), ["Run Now", "Run Now, Instead of 12:00", "Show Runs", "Edit Job…"])
-        XCTAssertEqual(allItems(pr.entries).map(\.action), [.runNow("pr-review"), .runEarly("pr-review"), .showRuns("pr-review"),
-                                                             .editJob("pr-review")])
+        for gone in ["# Working now", "Stop a", "Stop All Runs", "Open Terminal for a", "# Next to run", "pr-review ▸"] {
+            XCTAssertFalse(list.contains(gone), gone)
+        }
         let any = try XCTUnwrap(submenu("Run a Job Now", in: entries))
-        XCTAssertEqual(allItems(any.entries).map(\.action), [.runNow("nightly-tests"), .runNow("pr-review"), .runNow("release")])
-        XCTAssertFalse(titles(AppMenu.entries(context(upcoming: upcoming, daemon: false))).contains("# Next to run"))
+        XCTAssertEqual(allItems(any.entries).map(\.action), [.runNow("nightly-tests"), .runNow("pr-review")])
+        XCTAssertNil(submenu("Run a Job Now", in: AppMenu.entries(context(daemon: false))))
     }
 
     func testPauseIsOfferedWhileTheDaemonRuns() {
@@ -79,17 +74,6 @@ final class AppMenuTests: XCTestCase {
         let resume = items.first { $0.action == .setPaused(false) }
         XCTAssertEqual(resume?.title, "Resume All Jobs")
         XCTAssertFalse(items.contains { $0.action == .setPaused(true) })
-    }
-
-    func testEachActiveRunCanBeStoppedAndSeveralAtOnce() {
-        let one = AppMenu.RunEntry(runID: "a.1", jobID: "a", detail: "running for 2 min")
-        let two = AppMenu.RunEntry(runID: "b.3", jobID: "b", detail: "queued")
-        XCTAssertEqual(titles(AppMenu.entries(context(running: [one]))).filter { $0.contains("Stop") || $0.hasPrefix("#") },
-                       ["# Working now", "Stop a"])
-        let entries = AppMenu.entries(context(running: [one, two]))
-        XCTAssertTrue(titles(entries).contains("Stop All Runs"))
-        let items = entries.compactMap { if case let .item(i) = $0 { i } else { nil } }
-        XCTAssertEqual(items.first { $0.title == "Stop b" }?.action, .stopRun("b.3"))
     }
 
     func testFailedRunsOpenTheirLog() {
@@ -113,14 +97,6 @@ final class AppMenuTests: XCTestCase {
         XCTAssertFalse(items.contains { $0.title == "deploy" }, "listed again as a failure")
         XCTAssertTrue(items.contains { $0.title == "nightly" })
         XCTAssertFalse(titles(AppMenu.entries(context())).contains("# Waiting for your OK"))
-    }
-
-    func testARunInAConsoleCanBeOpenedFromTheMenu() {
-        let console = AppMenu.RunEntry(runID: "learn.3", jobID: "learn", detail: "running for 2 min", console: true)
-        let plain = AppMenu.RunEntry(runID: "backup.9", jobID: "backup", detail: "running for 1 min")
-        let items = AppMenu.entries(context(running: [console, plain])).compactMap { if case let .item(i) = $0 { i } else { nil } }
-        XCTAssertEqual(items.first { $0.title == "Open Terminal for learn" }?.action, .openTerminal("learn.3"))
-        XCTAssertFalse(items.contains { $0.title == "Open Terminal for backup" }, "a run without a console")
     }
 
     func testTheConsoleOpensInKittyWhenItIsThere() {

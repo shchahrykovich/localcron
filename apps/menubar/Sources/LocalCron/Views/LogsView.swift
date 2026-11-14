@@ -190,6 +190,10 @@ struct RunLogView: View {
                             if run.console != nil { SmallButton("Terminal") { model.openTerminal(run) } }
                             SmallButton("Stop") { Task { await model.cancel(run) } }
                         } else if let job {
+                            if job.job.kind == .claude, run.sessionId != nil {
+                                SmallButton("Resume") { model.resume(run) }
+                                    .help("Open this session again in Claude Code, in a terminal, in the job's folder")
+                            }
                             SmallButton("Run Again") { Task { await model.runNow(job) } }
                         }
                     }
@@ -227,7 +231,9 @@ struct RunLogView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(10)
             }
-            .defaultScrollAnchor(.bottom)
+            // Bottom left: the newest lines, from the start of each line.
+            // `.bottom` is x = 0.5, which shows the middle or end of long lines.
+            .defaultScrollAnchor(.bottomLeading)
             .background(Theme.card, in: RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.line, lineWidth: 0.5))
         }

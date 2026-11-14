@@ -7,17 +7,12 @@ public enum AppMenu {
         case openWindow, newJob
         /// Pause (true) or resume (false) every schedule.
         case setPaused(Bool)
-        case stopRun(String), stopAllRuns
-        /// Open the console of a running run (by run id) in a terminal.
-        case openTerminal(String)
         case showLog(String)
         /// Ask the user to allow the job (by id) to read its secrets.
         case allowSecrets(String)
         /// A run more of the job (by id); `runEarly` runs its next
         /// scheduled time now instead.
         case runNow(String), runEarly(String)
-        /// The Runs tab for one job, and the editor of a job.
-        case showRuns(String), editJob(String)
         case installCLI, installClaude, installCodex, copyMCPCommand
         case openLogsFolder, openHelp
         case checkForUpdates, settings, quit
@@ -43,36 +38,16 @@ public enum AppMenu {
         case submenu(title: String, symbol: String?, detail: String?, entries: [Entry])
     }
 
-    /// A run in the menu: one that is queued or running, or the failed last
-    /// run of a job.
+    /// The failed last run of a job, in the menu.
     public struct RunEntry: Equatable, Sendable {
         public var runID: String
         public var jobID: String
-        /// "running for 2 min", "exit 2".
+        /// "today 09:05, exit 2".
         public var detail: String?
-        /// It runs in a console the user can open.
-        public var console: Bool
-
-        public init(runID: String, jobID: String, detail: String?, console: Bool = false) {
+        public init(runID: String, jobID: String, detail: String?) {
             self.runID = runID
             self.jobID = jobID
             self.detail = detail
-            self.console = console
-        }
-    }
-
-    /// A job whose next scheduled run comes soon.
-    public struct UpcomingRun: Equatable, Sendable {
-        public var jobID: String
-        /// "12:00, in 1 h 20 min", "tomorrow 02:00".
-        public var detail: String
-        /// "12:00": for "Run Now, Instead of 12:00".
-        public var time: String
-
-        public init(jobID: String, detail: String, time: String) {
-            self.jobID = jobID
-            self.detail = detail
-            self.time = time
         }
     }
 
@@ -95,28 +70,21 @@ public enum AppMenu {
         /// "3 jobs, next: weekly-review in 2 days"; nil when the daemon is not running.
         public var summary: String?
         public var paused: Bool
-        /// Queued and running runs.
-        public var running: [RunEntry]
         /// Jobs whose last run failed or timed out.
         public var failed: [RunEntry]
         /// Jobs waiting for the user to allow their secrets.
         public var waiting: [WaitingJob]
-        /// The next runs, soonest first.
-        public var upcoming: [UpcomingRun]
         /// Every job, for Run a Job Now.
         public var jobIDs: [String]
 
         public init(appName: String, cliInstalled: Bool, summary: String?, paused: Bool = false,
-                    running: [RunEntry] = [], failed: [RunEntry] = [], waiting: [WaitingJob] = [],
-                    upcoming: [UpcomingRun] = [], jobIDs: [String] = []) {
+                    failed: [RunEntry] = [], waiting: [WaitingJob] = [], jobIDs: [String] = []) {
             self.appName = appName
             self.cliInstalled = cliInstalled
             self.summary = summary
             self.paused = paused
-            self.running = running
             self.failed = failed
             self.waiting = waiting
-            self.upcoming = upcoming
             self.jobIDs = jobIDs
         }
     }
@@ -141,21 +109,6 @@ public enum AppMenu {
                                           detail: "Reads \(job.secrets.joined(separator: ", ")); runs fail until you allow it")))
             }
         }
-        if !c.running.isEmpty {
-            entries.append(.separator)
-            entries.append(.header("Working now"))
-            for run in c.running {
-                if run.console {
-                    entries.append(.item(Item(title: "Open Terminal for \(run.jobID)", symbol: "terminal", action: .openTerminal(run.runID),
-                                              detail: "Watch it and type into it; closing the terminal leaves it running")))
-                }
-                entries.append(.item(Item(title: "Stop \(run.jobID)", symbol: "stop.circle", action: .stopRun(run.runID),
-                                          detail: run.detail)))
-            }
-            if c.running.count > 1 {
-                entries.append(.item(Item(title: "Stop All Runs", symbol: "stop.fill", action: .stopAllRuns)))
-            }
-        }
         // A waiting job failed for that reason: its entry above says it.
         let waitingIDs = Set(c.waiting.map(\.jobID))
         let failed = c.failed.filter { !waitingIDs.contains($0.jobID) }
@@ -167,26 +120,10 @@ public enum AppMenu {
                                           detail: run.detail)))
             }
         }
-        if c.summary != nil && (!c.upcoming.isEmpty || !c.jobIDs.isEmpty) {
+        if c.summary != nil && !c.jobIDs.isEmpty {
             entries.append(.separator)
-            if !c.upcoming.isEmpty {
-                entries.append(.header("Next to run"))
-                for next in c.upcoming {
-                    entries.append(.submenu(title: next.jobID, symbol: "clock", detail: next.detail, entries: [
-                        .item(Item(title: "Run Now", symbol: "play.fill", action: .runNow(next.jobID),
-                                   detail: "A run more; \(next.time) still runs")),
-                        .item(Item(title: "Run Now, Instead of \(next.time)", symbol: "forward.end", action: .runEarly(next.jobID),
-                                   detail: "The run of \(next.time) runs now, not at its time")),
-                        .separator,
-                        .item(Item(title: "Show Runs", symbol: "list.bullet", action: .showRuns(next.jobID))),
-                        .item(Item(title: "Edit Job…", symbol: "pencil", action: .editJob(next.jobID))),
-                    ]))
-                }
-            }
-            if !c.jobIDs.isEmpty {
-                entries.append(.submenu(title: "Run a Job Now", symbol: "play", detail: nil,
-                                        entries: c.jobIDs.map { .item(Item(title: $0, action: .runNow($0))) }))
-            }
+            entries.append(.submenu(title: "Run a Job Now", symbol: "play", detail: nil,
+                                    entries: c.jobIDs.map { .item(Item(title: $0, action: .runNow($0))) }))
         }
         return entries + [
             .separator,

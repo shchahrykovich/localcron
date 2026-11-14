@@ -28,8 +28,9 @@ public enum ConsoleTerminal: String, CaseIterable, Sendable, Identifiable {
         }
     }
 
-    /// kitty's arguments: a new window that runs the console command.
-    public static func kittyArguments(command: String, runID: String) -> [String] {
-        ["--title", "\(runID) console", "/bin/sh", "-c", "exec \(command)"]
+    /// kitty's arguments: a new window that runs the console command, in
+    /// `dir` when one is given.
+    public static func kittyArguments(command: String, runID: String, title: String? = nil, dir: String? = nil) -> [String] {
+        ["--title", title ?? "\(runID) console"] + (dir.map { ["--directory", $0] } ?? []) + ["/bin/sh", "-c", "exec \(command)"]
     }
 }

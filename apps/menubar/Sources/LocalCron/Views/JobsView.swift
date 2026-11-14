@@ -2,7 +2,7 @@ import LocalCronKit
 import SwiftUI
 
 /// The Jobs tab: today's runs on a strip, jobs that wait for the user's
-/// OK, then the jobs grouped by folder.
+/// OK, then all jobs in one card, the next to run first.
 struct JobsView: View {
     @Environment(AppModel.self) private var model
 
@@ -12,10 +12,15 @@ struct JobsView: View {
         } else {
             ScrollView {
                 VStack(spacing: 12) {
-                    TodayCard().zIndex(1) // its tooltip goes over the folders below
+                    TodayCard().zIndex(1) // its tooltip goes over the jobs below
                     ForEach(model.jobs.filter { $0.secretsAllowed == false }) { WaitingBanner(job: $0) }
                     if !model.failedJobs.isEmpty { FailedBanner(jobs: model.failedJobs) }
-                    ForEach(JobGroups.byFolder(model.jobs)) { FolderSection(folder: $0) }
+                    Card {
+                        ForEach(Array(JobGroups.ordered(model.jobs).enumerated()), id: \.element.id) { i, job in
+                            if i > 0 { RowDivider() }
+                            JobRow(job: job)
+                        }
+                    }
                 }
                 .padding(.horizontal, 14)
                 .padding(.bottom, 12)
@@ -327,42 +332,6 @@ struct FailedBanner: View {
     }
 }
 
-/// The jobs of one folder: a header that folds them, and a card.
-struct FolderSection: View {
-    @Environment(AppModel.self) private var model
-    let folder: JobFolder
-
-    var body: some View {
-        let open = !model.closedFolders.contains(folder.dir)
-        VStack(spacing: 6) {
-            Button {
-                if open { model.closedFolders.insert(folder.dir) } else { model.closedFolders.remove(folder.dir) }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: open ? "chevron.down" : "chevron.right").font(.system(size: 9, weight: .bold)).frame(width: 10)
-                    Text(folder.title).fontWeight(.semibold).lineLimit(1).truncationMode(.head)
-                    Spacer()
-                    Text(folder.summary).fontWeight(.medium)
-                }
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 4)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help(folder.dir)
-            if open {
-                Card {
-                    ForEach(Array(folder.jobs.enumerated()), id: \.element.id) { i, job in
-                        if i > 0 { RowDivider() }
-                        JobRow(job: job)
-                    }
-                }
-            }
-        }
-    }
-}
-
 struct JobRow: View {
     @Environment(AppModel.self) private var model
     let job: JobView
@@ -389,6 +358,7 @@ struct JobRow: View {
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture(count: 2) { model.edit(job) }
+        .help(JobGroups.tilde(job.job.dir))
         .contextMenu { JobMenu(job: job) }
     }
 

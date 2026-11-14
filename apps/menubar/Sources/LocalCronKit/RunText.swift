@@ -160,31 +160,11 @@ public enum RunGroups {
     public static func count(_ n: Int) -> String { n == 1 ? "1 run" : "\(n) runs" }
 }
 
-/// The jobs of one folder in the Jobs tab.
-public struct JobFolder: Equatable, Sendable, Identifiable {
-    /// The folder as the job has it.
-    public var dir: String
-    /// `~/Projects/shop`.
-    public var title: String
-    /// "3 jobs, 1 running", "1 job, off".
-    public var summary: String
-    public var jobs: [JobView]
-    public var id: String { dir }
-}
-
 public enum JobGroups {
-    /// Jobs grouped by folder, folders in the order of their names. Inside a
-    /// folder: running jobs first, then by the next run, then off.
-    public static func byFolder(_ jobs: [JobView], home: String = NSHomeDirectory()) -> [JobFolder] {
-        let groups = Dictionary(grouping: jobs, by: \.job.dir)
-        return groups.keys.sorted().map { dir in
-            let list = groups[dir]!.sorted(by: order)
-            let running = list.filter { $0.activeRun != nil }.count
-            var summary = list.count == 1 ? "1 job" : "\(list.count) jobs"
-            if running > 0 { summary += ", \(running) running" }
-            if list.allSatisfy({ !$0.job.enabled }) { summary += ", off" }
-            return JobFolder(dir: dir, title: tilde(dir, home: home), summary: summary, jobs: list)
-        }
+    /// All jobs in one list, whatever their folder: running jobs first,
+    /// then by the next run, then off.
+    public static func ordered(_ jobs: [JobView]) -> [JobView] {
+        jobs.sorted(by: order)
     }
 
     /// `/Users/me/Projects/shop` → `~/Projects/shop`.

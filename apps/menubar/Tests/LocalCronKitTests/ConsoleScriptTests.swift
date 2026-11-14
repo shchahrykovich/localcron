@@ -24,4 +24,22 @@ final class ConsoleScriptTests: XCTestCase {
         XCTAssertEqual(run.console, "/opt/homebrew/bin/tmux -L localcron-a.1 attach -t run")
         XCTAssertTrue(String(decoding: try Api.encoder.encode(run), as: UTF8.self).contains("\"console\""))
     }
+
+    func testResumeOpensTheSessionInTheLoginShell() {
+        let id = "4abdcd7d-1dc4-4dad-a53d-a3cee0a3d889"
+        XCTAssertEqual(ConsoleScript.resumeCommand(session: id, shell: "/bin/zsh"),
+                       "'/bin/zsh' -lic 'claude --resume \(id)'")
+        XCTAssertNil(ConsoleScript.resumeCommand(session: "x'; rm -rf ~", shell: "/bin/zsh"), "only a session id")
+    }
+
+    func testAScriptWithAFolderGoesThereFirst() {
+        let text = ConsoleScript.text(runID: "a.1", command: "claude", dir: "/Users/me/it's here", note: "Resume a.1")
+        XCTAssertTrue(text.contains("\n# Resume a.1\ncd -- '/Users/me/it'\\''s here' || exit 1\nexec claude\n"), text)
+        XCTAssertFalse(ConsoleScript.text(runID: "a.1", command: "x").contains("cd --"))
+    }
+
+    func testKittyStartsInTheFolder() {
+        XCTAssertEqual(ConsoleTerminal.kittyArguments(command: "claude", runID: "a.1", title: "a.1 resume", dir: "/tmp/x"),
+                       ["--title", "a.1 resume", "--directory", "/tmp/x", "/bin/sh", "-c", "exec claude"])
+    }
 }

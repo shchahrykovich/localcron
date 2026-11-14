@@ -134,6 +134,9 @@ struct RunRow: View {
             Button("Reveal Log in Finder") { model.revealLog(run) }
             if let job = model.job(run.jobId) {
                 Button("Run \(run.jobId) Again") { Task { await model.runNow(job) } }
+                if run.status.isFinished, job.job.kind == .claude, run.sessionId != nil {
+                    Button("Resume in Terminal") { model.resume(run) }
+                }
                 Button("Edit \(run.jobId)…") { model.edit(job) }
             }
             if !run.status.isFinished {

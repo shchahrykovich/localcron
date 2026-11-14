@@ -75,7 +75,7 @@ final class RunTextTests: XCTestCase {
         XCTAssertEqual(RunFilter.failed.apply(runs, query: "wiki").map(\.id), [])
     }
 
-    func testJobsGroupByFolderWithASummary() throws {
+    func testJobsAreOneListAcrossFolders() throws {
         func job(_ id: String, dir: String, enabled: Bool = true, running: Bool = false, next: String? = nil) throws -> JobView {
             let active = running ? #","active_run":{"id":"\#(id).1","job_id":"\#(id)","trigger":"manual","status":"running","queued_at":"2026-10-30T10:00:00Z"}"# : ""
             let nextJSON = next.map { #","next_run":"\#($0)""# } ?? ""
@@ -84,12 +84,11 @@ final class RunTextTests: XCTestCase {
         }
         let jobs = [try job("pr-review", dir: "/Users/me/Projects/shop", next: "2026-10-30T12:00:00Z"),
                     try job("nightly", dir: "/Users/me/Projects/shop", next: "2026-10-31T02:00:00Z"),
+                    try job("notes", dir: "/Users/me/notes", enabled: false),
                     try job("deps", dir: "/Users/me/Projects/shop", running: true),
-                    try job("notes", dir: "/Users/me/notes", enabled: false)]
-        let folders = JobGroups.byFolder(jobs, home: "/Users/me")
-        XCTAssertEqual(folders.map(\.title), ["~/Projects/shop", "~/notes"])
-        XCTAssertEqual(folders.map(\.summary), ["3 jobs, 1 running", "1 job, off"])
-        XCTAssertEqual(folders[0].jobs.map(\.id), ["deps", "pr-review", "nightly"], "running first, then the soonest")
+                    try job("journal", dir: "/Users/me/notes", next: "2026-10-30T20:00:00Z")]
+        // Not grouped by folder: running first, then the soonest, then off.
+        XCTAssertEqual(JobGroups.ordered(jobs).map(\.id), ["deps", "pr-review", "journal", "nightly", "notes"])
         XCTAssertEqual(JobGroups.tilde("/Users/me", home: "/Users/me"), "~")
         XCTAssertEqual(JobGroups.tilde("/tmp/x", home: "/Users/me"), "/tmp/x")
     }

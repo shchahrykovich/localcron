@@ -154,7 +154,8 @@ new value when this one expires or leaks.
 - A `claude` or `codex` run shows the tokens it used (`{{CLI}} runs`, and
   the Usage view of the app's Runs tab). They are read from the agent's own
   session file when the run ends. A `claude` run gets its own session id, so
-  `claude --resume <session id>` opens it again.
+  `claude --resume <session id>` opens it again. In the app, **Resume** on
+  a finished run does this in a terminal, in the job's folder.
 - A time missed while the Mac slept or was off runs once at wake, unless
   the job has `--no-catch-up`. Times missed while paused do not run.
 - Runs use the PATH of your login shell, so `claude`, `codex`, `node` and

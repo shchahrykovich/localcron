@@ -195,6 +195,45 @@ final class CalendarLayoutTests: XCTestCase {
     }
 }
 
+final class FrequentJobsTests: XCTestCase {
+    private func marks(_ job: String, every minutes: Double, count: Int, mark: RunMark = .succeeded) -> [TimeMark] {
+        (0..<count).map { i in
+            TimeMark(id: "\(job).\(i)", jobID: job, mark: mark, start: testNow.addingTimeInterval(Double(i) * minutes * 60))
+        }
+    }
+
+    func testHourlyJobsAreFrequentAndDailyJobsAreNot() {
+        let all = marks("hourly", every: 60, count: 24) + marks("two-hours", every: 120, count: 6)
+            + marks("four-hours", every: 240, count: 6) + marks("daily", every: 1440, count: 7)
+        XCTAssertEqual(FrequentJobs.ids(all), ["hourly", "two-hours"])
+    }
+
+    func testOneExtraRunDoesNotMakeADailyJobFrequent() {
+        var daily = marks("daily", every: 1440, count: 4)
+        daily.append(TimeMark(id: "daily.now", jobID: "daily", mark: .succeeded, start: testNow.addingTimeInterval(600)))
+        XCTAssertEqual(FrequentJobs.ids(daily), [])
+    }
+
+    func testFewRunsAreNotFrequent() {
+        XCTAssertEqual(FrequentJobs.ids(marks("hourly", every: 60, count: 3)), [])
+        XCTAssertEqual(FrequentJobs.ids(marks("hourly", every: 60, count: 4)), ["hourly"])
+    }
+
+    func testRunsAtTheSameMinuteCountOnce() {
+        let same = (0..<5).map { TimeMark(id: "a.\($0)", jobID: "a", mark: .succeeded, start: testNow) }
+        XCTAssertEqual(FrequentJobs.ids(same), [])
+    }
+
+    func testAFailedRunOfAFrequentJobStaysInTheGrid() {
+        let hourly = marks("hourly", every: 60, count: 4)
+        let failed = TimeMark(id: "hourly.x", jobID: "hourly", mark: .failed, start: testNow)
+        let daily = TimeMark(id: "daily.1", jobID: "daily", mark: .planned, start: testNow)
+        let split = FrequentJobs.split(hourly + [failed, daily], frequent: ["hourly"])
+        XCTAssertEqual(split.grid.map(\.id), ["hourly.x", "daily.1"])
+        XCTAssertEqual(split.ticks.count, 5)
+    }
+}
+
 final class SchedulePresetTests: XCTestCase {
     func testEachButtonKeepsTheTimeOfDay() {
         let now = testNow

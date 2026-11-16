@@ -27,8 +27,7 @@ final class AppWindow {
         }
         let window = self.window ?? makeWindow()
         self.window = window
-        window.contentViewController = NSHostingController(rootView: content())
-        window.setContentSize(size)
+        WindowContent.host(content(), in: window, size: size)
         window.center()
         DockPresence.windowWillShow()
         NSApp.activate()

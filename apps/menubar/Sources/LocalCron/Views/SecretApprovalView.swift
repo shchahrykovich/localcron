@@ -38,11 +38,10 @@ final class SecretApprovalWindow: NSObject, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         window.contentMinSize = NSSize(width: 540, height: 420)
         window.delegate = self
-        window.contentViewController = NSHostingController(rootView: SecretApprovalView(
+        WindowContent.host(SecretApprovalView(
             approval: approval, review: review,
             onCancel: { [weak self] in self?.finish(false) },
-            onAllow: { [weak self] in self?.finish(true) }))
-        window.setContentSize(NSSize(width: 660, height: 680))
+            onAllow: { [weak self] in self?.finish(true) }), in: window, size: NSSize(width: 660, height: 680))
         review.start(approval) { Self.reviews[key] = $0 }
     }
 

@@ -3,12 +3,15 @@ import SwiftUI
 
 /// The Calendar tab of the Runs window: a column for each day, a block for
 /// each run at its time, planned runs dashed. A click on a block shows that
-/// run on the right; Show Log opens its log in the Logs tab.
+/// run on the right; Show Log opens its log in the Logs tab. In the week,
+/// jobs that run every two hours or more often are a row of ticks at the top
+/// of each day, not blocks: their blocks filled every hour and hid the rest.
+/// A click on a day's header shows that day alone.
 struct WeekView: View {
     @Environment(AppModel.self) private var model
     let perform: (AppMenu.Action) -> Void
     @State private var anchor = Date()
-    @State private var days = 7
+    @AppStorage("calendarDays") private var days = 7
     @State private var jobFilter = ""
     @State private var selected: String?
 
@@ -22,6 +25,8 @@ struct WeekView: View {
         let dates = (0..<days).compactMap { cal.date(byAdding: .day, value: $0, to: first) }
         let all = model.timeMarks(from: merged).filter { jobFilter.isEmpty || $0.jobID == jobFilter }
         let shown = all.filter { m in dates.contains { cal.isDate(m.start, inSameDayAs: $0) } }
+        let frequent = days == 7 && jobFilter.isEmpty ? FrequentJobs.ids(all) : []
+        let split = FrequentJobs.split(shown, frequent: frequent)
         HStack(spacing: 0) {
             VStack(spacing: 0) {
                 toolbar(dates)
@@ -30,10 +35,14 @@ struct WeekView: View {
                     let column = (geo.size.width - gutter - 14) / CGFloat(days)
                     VStack(spacing: 0) {
                         dayHeaders(dates, marks: shown, column: column)
+                        if !split.ticks.isEmpty {
+                            Divider()
+                            tickRows(dates, jobs: frequent.sorted(), marks: split.ticks, column: column)
+                        }
                         Divider()
                         ScrollViewReader { proxy in
                             ScrollView {
-                                grid(dates, marks: shown, column: column)
+                                grid(dates, marks: split.grid, column: column)
                                     .padding(.top, 8)
                                     .padding(.trailing, 14)
                             }
@@ -127,25 +136,94 @@ struct WeekView: View {
                 let past = dayMarks.filter { $0.mark != .planned }
                 let notOK = dayMarks.filter { $0.mark.isProblem }.count
                 let today = Calendar.current.isDateInToday(day)
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 5) {
-                        Text(f.string(from: day)).font(.system(size: 11)).foregroundStyle(.secondary)
-                        Text("\(Calendar.current.component(.day, from: day))")
-                            .font(.system(size: 12.5, weight: .semibold))
-                            .foregroundStyle(today ? Color.white : .primary)
-                            .frame(minWidth: 20, minHeight: 20)
-                            .background(today ? Theme.accentFill : .clear, in: Capsule())
+                Button {
+                    anchor = day
+                    days = 1
+                } label: {
+                    VStack(alignment: .leading, spacing: 1) {
+                        HStack(spacing: 5) {
+                            Text(f.string(from: day)).font(.system(size: 11)).foregroundStyle(.secondary)
+                            Text("\(Calendar.current.component(.day, from: day))")
+                                .font(.system(size: 12.5, weight: .semibold))
+                                .foregroundStyle(today ? Color.white : .primary)
+                                .frame(minWidth: 20, minHeight: 20)
+                                .background(today ? Theme.accentFill : .clear, in: Capsule())
+                        }
+                        Text(past.isEmpty ? (dayMarks.isEmpty ? "" : "\(dayMarks.count) planned")
+                                          : RunGroups.count(past.count) + (notOK > 0 ? ", \(notOK) not OK" : ""))
+                            .font(.system(size: 10.5)).foregroundStyle(notOK > 0 ? Theme.dangerText : .secondary).lineLimit(1)
                     }
-                    Text(past.isEmpty ? (dayMarks.isEmpty ? "" : "\(dayMarks.count) planned")
-                                      : RunGroups.count(past.count) + (notOK > 0 ? ", \(notOK) not OK" : ""))
-                        .font(.system(size: 10.5)).foregroundStyle(notOK > 0 ? Theme.dangerText : .secondary).lineLimit(1)
+                    .padding(.horizontal, 8)
+                    .frame(width: column, height: 44, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
-                .padding(.horizontal, 8)
-                .frame(width: column, height: 44, alignment: .leading)
+                .buttonStyle(.plain)
+                .help(days == 1 ? "" : "Show this day alone")
                 .overlay(alignment: .leading) { Rectangle().fill(Theme.innerLine).frame(width: 1) }
             }
             Spacer(minLength: 0)
         }
+    }
+
+    /// A row for each frequent job: in each day its name, and under it a tick
+    /// at the time of each run. A click on the ticks shows the nearest run.
+    private func tickRows(_ dates: [Date], jobs: [String], marks: [TimeMark], column: CGFloat) -> some View {
+        VStack(spacing: 0) {
+            ForEach(jobs, id: \.self) { job in
+                HStack(spacing: 0) {
+                    Spacer().frame(width: gutter)
+                    ForEach(dates, id: \.self) { day in
+                        let dayMarks = MonthGrid.marks(marks.filter { $0.jobID == job }, on: day)
+                        ticks(job, day: day, marks: dayMarks, width: column - 12)
+                            .padding(.horizontal, 6)
+                            .frame(width: column, height: 30, alignment: .leading)
+                            .overlay(alignment: .leading) { Rectangle().fill(Theme.innerLine).frame(width: 1) }
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+        .padding(.vertical, 3)
+        .background(Theme.ground.opacity(0.5))
+    }
+
+    private func ticks(_ job: String, day: Date, marks: [TimeMark], width: CGFloat) -> some View {
+        let start = Calendar.current.startOfDay(for: day)
+        func x(_ m: TimeMark) -> CGFloat { CGFloat(m.start.timeIntervalSince(start) / 86_400) * width }
+        let past = marks.filter { $0.mark != .planned }
+        let problems = marks.filter { $0.mark.isProblem }.count
+        let help = "\(job): " + [past.isEmpty ? nil : RunGroups.count(past.count),
+                                  problems > 0 ? "\(problems) not OK" : nil,
+                                  marks.count > past.count ? "\(marks.count - past.count) planned" : nil]
+            .compactMap { $0 }.joined(separator: ", ")
+        return VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 3) {
+                if let j = model.job(job) { JobGlyph(job: j.job, size: 10) }
+                Text(job).font(.system(size: 10.5, weight: .medium)).lineLimit(1).truncationMode(.middle)
+            }
+            .foregroundStyle(marks.isEmpty ? .tertiary : .secondary)
+            ZStack(alignment: .leading) {
+                Rectangle().fill(Theme.innerLine).frame(width: width, height: 1)
+                ForEach(marks) { m in
+                    let bad = m.mark.isProblem
+                    RoundedRectangle(cornerRadius: 1)
+                        .fill(m.mark == .planned ? m.mark.soft.border : m.mark.soft.text)
+                        .frame(width: bad ? 3 : 2, height: bad ? 11 : 8)
+                        .overlay {
+                            if selected == m.id {
+                                RoundedRectangle(cornerRadius: 2).strokeBorder(Theme.accentFill, lineWidth: 1.5).padding(-2.5)
+                            }
+                        }
+                        .offset(x: min(max(0, x(m) - 1), width - 2))
+                }
+            }
+            .frame(width: width, height: 11, alignment: .leading)
+            .contentShape(Rectangle())
+            .onTapGesture { point in
+                selected = marks.min { abs(x($0) - point.x) < abs(x($1) - point.x) }?.id
+            }
+        }
+        .help(marks.isEmpty ? job : help)
     }
 
     private func grid(_ dates: [Date], marks: [TimeMark], column: CGFloat) -> some View {
@@ -285,7 +363,8 @@ struct WeekView: View {
                         }
                     }
                 }
-                Text("A block is at least 40 minutes tall, so short runs stay readable. Hover a block for its exact time.")
+                Text("A block is at least 40 minutes tall, so short runs stay readable. Hover a block for its exact time."
+                     + (days == 7 ? " Jobs that run every two hours or more often are at the top of each day, a tick for each run; a failed run is also a block. Click a day to see it alone." : ""))
                     .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             .padding(14)

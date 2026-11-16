@@ -208,3 +208,29 @@ public enum WeekLayout {
         return out
     }
 }
+
+/// Jobs that run so often that their blocks fill every hour of the week
+/// view and hide the names of all the other jobs. The week view draws them as
+/// a row of ticks at the top of each day instead.
+public enum FrequentJobs {
+    /// A job is frequent when the usual time between its runs (the median, so
+    /// one extra Run Now does not change it) is `maxGap` or less, and it has
+    /// at least `minCount` runs. Two runs less than a minute apart count once.
+    public static func ids(_ marks: [TimeMark], maxGap: TimeInterval = 2 * 3600, minCount: Int = 4) -> Set<String> {
+        let byJob = Dictionary(grouping: marks, by: \.jobID)
+        return Set(byJob.compactMap { job, marks in
+            let starts = marks.map(\.start).sorted()
+            let gaps = zip(starts, starts.dropFirst()).map { $1.timeIntervalSince($0) }.filter { $0 >= 60 }
+            guard starts.count >= minCount, !gaps.isEmpty else { return nil }
+            return gaps.sorted()[gaps.count / 2] <= maxGap ? job : nil
+        })
+    }
+
+    /// The marks for the hour grid and the marks for the rows of ticks. A
+    /// failed or timed-out run of a frequent job is in both: a problem must be
+    /// seen.
+    public static func split(_ marks: [TimeMark], frequent: Set<String>) -> (grid: [TimeMark], ticks: [TimeMark]) {
+        (marks.filter { !frequent.contains($0.jobID) || $0.mark.isProblem },
+         marks.filter { frequent.contains($0.jobID) })
+    }
+}

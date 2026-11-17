@@ -46,6 +46,12 @@ The MCP server `{{CLI}}` has these tools. The CLI `{{CLI}}` does the same
      the user agrees to what the job may do.
    - `codex`: `prompt` is the task. It runs `codex exec <prompt>` in `dir`.
    - `shell`: `command` runs with the user's shell in `dir`.
+
+   A `claude` or `codex` job always gets a `model`: `opus`, `sonnet`, or
+   the model the user names. Without it the run uses the model in the
+   user's Claude Code or Codex settings, so every job changes model when
+   the user changes that setting. Ask the user when they did not say which
+   model.
 4. A token or key the job needs goes in `secret_env`, never in `env` or the
    prompt: see Secrets below.
 5. `dir` is the project folder. The MCP server uses your current folder when
@@ -88,8 +94,8 @@ nobody there.
 - A job with `secret_env` gets its secrets only after the user allows it in
   the {{APP}} menu bar app (Jobs, Allow Secrets), with Touch ID or their
   password. The reply says `secrets_allowed: false` until then: tell the user.
-  A change to what the job runs (command, prompt, args, folder, env,
-  secret_env) needs a new approval; a new schedule does not. You cannot
+  A change to what the job runs (command, prompt, model, permission_mode,
+  args, folder, env, secret_env) needs a new approval; a new schedule does not. You cannot
   allow it yourself, by any tool or command.
 - Run logs show a secret's value as `<secret NAME>`.
 - When the reply has `missing_secrets`, give the user each `set_command` to

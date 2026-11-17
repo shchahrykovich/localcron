@@ -21,4 +21,13 @@ mod tests {
         assert!(text.contains("`localcron-dev --help`"));
         assert!(!text.contains("{{"));
     }
+
+    /// A job without a model follows the user's Claude Code setting, so
+    /// all jobs moved to another model when the user changed it.
+    #[test]
+    fn tells_agents_to_give_a_model() {
+        let text = render(&Instance::new("").unwrap());
+        assert!(text.contains("job always gets a `model`"));
+        assert!(text.contains("(command, prompt, model, permission_mode,"));
+    }
 }

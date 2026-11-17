@@ -43,7 +43,8 @@ pub struct AddJobArgs {
     /// Absolute working folder. Default: the folder this MCP server runs in (your project).
     #[serde(default)]
     pub dir: Option<String>,
-    /// claude and codex: the model, for example "sonnet".
+    /// claude and codex: the model, for example "opus" or "sonnet". Always give one: without it the run uses the model
+    /// in the user's Claude Code or Codex settings and changes when they change it.
     #[serde(default)]
     pub model: Option<String>,
     /// claude: --permission-mode, for example "acceptEdits". Only when the user agrees: a scheduled run has nobody to approve tools.

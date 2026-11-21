@@ -764,10 +764,20 @@ final class AppModel {
         return feedback
     }
 
-    func copy(_ text: String) {
+    func copy(_ text: String, said: String? = nil) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
-        say("Copied: \(text)")
+        say(said ?? "Copied: \(text)")
+    }
+
+    /// Copies a prompt that re-creates `jobs` (all when nil) on another Mac:
+    /// paste it into Claude Code or Codex there.
+    func copySharePrompt(_ jobs: [JobView]? = nil) {
+        let jobs = (jobs ?? JobGroups.ordered(self.jobs)).map(\.job)
+        guard !jobs.isEmpty else { return }
+        let text = SharePrompt.text(jobs: jobs, secrets: secrets, appName: Instance.current.appName)
+        let what = jobs.count == 1 ? jobs[0].id : "\(jobs.count) jobs"
+        copy(text, said: "Copied a prompt for \(what): paste it into Claude Code or Codex on the other Mac")
     }
 
     var menuContext: AppMenu.Context {

@@ -273,6 +273,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
                 if !fromWindow, model.messageFailed, let why = model.message { alert(.failed("\(jobID) did not start", why)) }
             }
         case .copyMCPCommand: model.copy(model.mcpCommand)
+        case .copySharePrompt: model.copySharePrompt()
         case .openLogsFolder: model.openLogsFolder()
         case .openHelp: model.openHelp()
         case .installCLI: report(model.installCLI(), fromWindow: fromWindow)

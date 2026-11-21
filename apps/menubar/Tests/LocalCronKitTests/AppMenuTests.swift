@@ -50,6 +50,13 @@ final class AppMenuTests: XCTestCase {
         XCTAssertTrue(titles(entries).contains("Help"), "not \"LocalCron Help\"")
     }
 
+    func testCopyAllJobsAsPromptOnlyWithJobsAndTheDaemon() {
+        let share = { (c: AppMenu.Context) in self.allItems(AppMenu.entries(c)).filter { $0.action == .copySharePrompt } }
+        XCTAssertEqual(share(context(jobIDs: ["nightly-tests"])).map(\.title), ["Copy All Jobs as Prompt"])
+        XCTAssertTrue(share(context(jobIDs: [])).isEmpty, "no jobs, nothing to share")
+        XCTAssertTrue(share(context(jobIDs: ["nightly-tests"], daemon: false)).isEmpty, "the daemon is not running")
+    }
+
     func testTheMenuDoesNotListRunningOrNextRuns() throws {
         // The popover and the Runs window show them; the menu only offers to run a job.
         let entries = AppMenu.entries(context(jobIDs: ["nightly-tests", "pr-review"]))

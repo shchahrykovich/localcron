@@ -246,6 +246,14 @@ struct JobEditorView: View {
                             }
                             .labelsHidden()
                         }
+                        field("Config folder") {
+                            TextField("", text: $draft.configDir, prompt: Text("Default: ~/.claude"))
+                                .font(.system(size: 12, design: .monospaced)).textFieldStyle(.roundedBorder)
+                        }
+                        if !draft.configDir.trimmingCharacters(in: .whitespaces).isEmpty {
+                            hint("The run gets CLAUDE_CONFIG_DIR: its own settings, login and sessions. A new folder needs a login first: run CLAUDE_CONFIG_DIR=\(draft.configDir) claude in a terminal once.")
+                                .padding(.leading, 104)
+                        }
                     }
                     field("More arguments") {
                         TextField("", text: $draft.argsText, prompt: Text(draft.kind == .claude ? "--max-turns 30" : "--full-auto"),

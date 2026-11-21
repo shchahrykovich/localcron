@@ -43,7 +43,10 @@ The MCP server `{{CLI}}` has these tools. The CLI `{{CLI}}` does the same
      The run has no person to approve tools, so a tool that needs approval is
      refused. Give `permission_mode` (`acceptEdits`, `bypassPermissions`, …)
      or `args` such as `["--allowedTools", "Bash(git *) Read Edit"]` only when
-     the user agrees to what the job may do.
+     the user agrees to what the job may do. To run it with another Claude
+     Code config folder (settings, login), give
+     `env: {"CLAUDE_CONFIG_DIR": "/Users/me/.claude-work"}`, a full path;
+     only when the user asks for one.
    - `codex`: `prompt` is the task. It runs `codex exec <prompt>` in `dir`.
    - `shell`: `command` runs with the user's shell in `dir`.
 

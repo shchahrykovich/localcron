@@ -466,6 +466,8 @@ struct JobMenu: View {
             Button("Stop \(active.id)") { Task { await model.cancel(active) } }
             Button("Kill \(active.id) Now") { Task { await model.cancel(active, kill: true) } }
         }
+        Button("Copy Prompt for Another Mac") { model.copySharePrompt([job]) }
+            .help("A prompt for Claude Code or Codex on another Mac that makes this job there")
         Divider()
         Button("Show Runs") { model.showRuns(jobID: job.id) }
         if job.job.kind != .shell {

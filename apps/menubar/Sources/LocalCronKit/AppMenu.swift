@@ -13,7 +13,7 @@ public enum AppMenu {
         /// A run more of the job (by id); `runEarly` runs its next
         /// scheduled time now instead.
         case runNow(String), runEarly(String)
-        case installCLI, installClaude, installCodex, copyMCPCommand
+        case installCLI, installClaude, installCodex, copyMCPCommand, copySharePrompt
         case openLogsFolder, openHelp
         case checkForUpdates, settings, quit
     }
@@ -124,6 +124,8 @@ public enum AppMenu {
             entries.append(.separator)
             entries.append(.submenu(title: "Run a Job Now", symbol: "play", detail: nil,
                                     entries: c.jobIDs.map { .item(Item(title: $0, action: .runNow($0))) }))
+            entries.append(.item(Item(title: "Copy All Jobs as Prompt", symbol: "square.and.arrow.up", action: .copySharePrompt,
+                                      detail: "For Claude Code or Codex on another Mac")))
         }
         return entries + [
             .separator,

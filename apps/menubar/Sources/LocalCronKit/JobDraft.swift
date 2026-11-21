@@ -26,8 +26,14 @@ public struct JobDraft: Equatable, Sendable {
     public var iconColors: Bool
     /// The saved job has an icon: an empty `icon` must remove it.
     private var hadIcon = false
-    /// Kept as it was: the form does not edit it.
+    /// Kept as it was, but for `CLAUDE_CONFIG_DIR` of a claude job (`configDir`).
     public var env: [String: String]
+    /// claude: the `CLAUDE_CONFIG_DIR` of the run, so it uses another Claude
+    /// Code config (settings, login, sessions). Empty: no variable, and
+    /// Claude Code uses ~/.claude.
+    public var configDir: String
+    /// Expands `~` in `configDir`: a variable is not expanded by a shell.
+    private var home: String
     /// `secret_env` as rows the form can edit: variable and secret name.
     public var secretRows: [SecretEnvRow]
 
@@ -50,10 +56,12 @@ public struct JobDraft: Equatable, Sendable {
         icon = ""
         iconColors = false
         env = [:]
+        configDir = ""
         secretRows = []
+        self.home = home.path
     }
 
-    public init(job: Job) {
+    public init(job: Job, home: URL = FileManager.default.homeDirectoryForCurrentUser) {
         isNew = false
         id = job.id
         schedule = job.schedule
@@ -72,8 +80,13 @@ public struct JobDraft: Equatable, Sendable {
         iconColors = job.iconColors
         hadIcon = job.icon != nil
         env = job.env
+        configDir = job.kind == .claude ? job.env[Self.claudeConfigVar].map { JobGroups.tilde($0, home: home.path) } ?? "" : ""
+        self.home = home.path
         secretRows = job.secretEnv.sorted { $0.key < $1.key }.map { SecretEnvRow(variable: $0.key, secret: $0.value) }
     }
+
+    /// The variable Claude Code reads its config folder from.
+    public static let claudeConfigVar = "CLAUDE_CONFIG_DIR"
 
     /// Permission modes `claude --permission-mode` takes. Empty uses the
     /// user's Claude Code settings.
@@ -91,6 +104,15 @@ public struct JobDraft: Equatable, Sendable {
         let agent = kind != .shell
         if agent, trimmed(prompt) == nil { return .failure(ApiError(code: "invalid", message: "Write the prompt.")) }
         if !agent, trimmed(command) == nil { return .failure(ApiError(code: "invalid", message: "Write the command.")) }
+        var env = env
+        if kind == .claude {
+            switch trimmed(configDir) {
+            case nil: env[Self.claudeConfigVar] = nil
+            case let dir? where dir == "~" || dir.hasPrefix("~/"): env[Self.claudeConfigVar] = home + dir.dropFirst()
+            case let dir? where dir.hasPrefix("/"): env[Self.claudeConfigVar] = dir
+            case .some: return .failure(ApiError(code: "invalid", message: "The config folder must be a full path, like ~/.claude-work."))
+            }
+        }
         var secretEnv: [String: String] = [:]
         for row in secretRows {
             let variable = trimmed(row.variable), secret = trimmed(row.secret)

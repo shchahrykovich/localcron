@@ -80,6 +80,26 @@ lr_notary_credentials() {
 
 lr_die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
+# Stops a release whose tag would not hold the code in its image: the tag is
+# made at a commit on GitHub, the image from this folder. So the folder must
+# have no uncommitted changes and HEAD must be origin/main. With
+# allow_version 1 (a rerun with --no-bump), Cargo.toml and Cargo.lock may
+# hold the version an earlier run set.
+#   lr_check_pushed <repository root> <allow_version 0|1>
+lr_check_pushed() {
+    local root="$1" allow_version="$2" dirty ahead behind
+    git -C "$root" fetch -q origin main || lr_die "cannot fetch origin main"
+    dirty="$(git -C "$root" status --porcelain --untracked-files=no)"
+    if [[ "$allow_version" == 1 ]]; then
+        dirty="$(grep -vE '^.. (Cargo\.toml|Cargo\.lock)$' <<<"$dirty" || true)"
+    fi
+    [[ -z "$dirty" ]] || lr_die "uncommitted changes would be in the image but not in the tag; commit and push them first:"$'\n'"$dirty"
+    ahead="$(git -C "$root" rev-list --count origin/main..HEAD)"
+    [[ "$ahead" == 0 ]] || lr_die "$ahead commit(s) are not on GitHub, so the tag would not have them: run git push origin main first"
+    behind="$(git -C "$root" rev-list --count HEAD..origin/main)"
+    [[ "$behind" == 0 ]] || lr_die "HEAD is $behind commit(s) behind origin/main: run git pull first"
+}
+
 # An instance suffix: empty for the release, or "-" and 1 to 15 of a-z, 0-9.
 #   lr_check_suffix <suffix>
 lr_check_suffix() {

@@ -16,6 +16,12 @@ gh auth status >/dev/null 2>&1 || [[ -n "${GH_TOKEN:-}" ]] || lr_die "gh is not 
 empty="$(gh repo view "$LC_GH_REPO" --json isEmpty -q .isEmpty 2>/dev/null)" || lr_die "cannot see $LC_GH_REPO"
 [[ "$empty" == "false" ]] || lr_die "$LC_GH_REPO has no commits; push the source first (a release needs a commit to tag)"
 
+# The tag goes on this commit, which must be on GitHub as it is here.
+allow_version=0
+for arg in "$@"; do [[ "$arg" == "--no-bump" ]] && allow_version=1; done
+lr_check_pushed "$ROOT" "$allow_version"
+target="$(git -C "$ROOT" rev-parse HEAD)"
+
 "$ROOT/scripts/release.sh" --notarize "$@"
 
 version="$(lr_version "$ROOT/Cargo.toml")"
@@ -32,7 +38,7 @@ lr_say "Creating release $tag on $LC_GH_REPO"
 if gh release view "$tag" -R "$LC_GH_REPO" >/dev/null 2>&1; then
     lr_say "Release $tag exists; replacing its image"
 else
-    gh release create "$tag" -R "$LC_GH_REPO" --latest --title "LocalCron $version" --notes "$notes"
+    gh release create "$tag" -R "$LC_GH_REPO" --target "$target" --latest --title "LocalCron $version" --notes "$notes"
 fi
 gh release upload "$tag" "$image" -R "$LC_GH_REPO" --clobber
 

@@ -1,18 +1,30 @@
 import LocalCronKit
 import SwiftUI
 
-/// The Runs window: the calendar, or the Logs tab. Both read the history,
+/// The app window, as in Slack: a rail of pages on the left (jobs, runs,
+/// the calendar, the logs, the chat with the jobs, secrets, Settings) and
+/// the chosen page beside it. The calendar and the logs read the history,
 /// so it is loaded here while the window is open.
-struct RunsWindowView: View {
+struct AppWindowView: View {
     @Environment(AppModel.self) private var model
     let perform: (AppMenu.Action) -> Void
 
     var body: some View {
-        Group {
-            switch model.runsWindowTab {
-            case .calendar: WeekView(perform: perform)
-            case .logs: LogsView()
+        HStack(spacing: 0) {
+            PageRail()
+            Rectangle().fill(Theme.line).frame(width: 0.5)
+            Group {
+                switch model.windowPage {
+                case .jobs: JobsWindowPage()
+                case .runs: RunsWindowPage()
+                case .secrets: SecretsWindowPage()
+                case .calendar: WeekView(perform: perform)
+                case .logs: LogsView()
+                case .chat: ChatView()
+                case .settings: SettingsView(perform: perform)
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .task {
             while !Task.isCancelled {
@@ -23,16 +35,61 @@ struct RunsWindowView: View {
     }
 }
 
-/// The tabs of the Runs window, at the start of each tab's toolbar.
-struct RunsWindowTabs: View {
+/// The pages of the app window, one icon above the other with its name
+/// under it; Settings at the bottom. Chat shows how many messages are
+/// unread, Secrets a dot while a job waits for the user's OK.
+struct PageRail: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        @Bindable var model = model
-        Segments(items: AppModel.RunsWindowTab.allCases, selection: $model.runsWindowTab, fill: false) { tab, _ in
-            Text(tab.rawValue)
+        VStack(spacing: 10) {
+            ForEach(AppModel.WindowPage.allCases.filter { $0 != .settings }, id: \.self) { page in
+                item(page)
+            }
+            Spacer(minLength: 10)
+            RailUpdate()
+            item(.settings)
         }
-        .fixedSize()
+        .padding(.top, 12)
+        .padding(.bottom, 12)
+        .frame(width: 72)
+        .frame(maxHeight: .infinity)
+        .background(Theme.sidebar)
+    }
+
+    private func item(_ page: AppModel.WindowPage) -> some View {
+        let selected = model.windowPage == page
+        return Button { model.windowPage = page } label: {
+            VStack(spacing: 4) {
+                Image(systemName: page.symbol)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(selected ? Color.white : Color.primary.opacity(0.75))
+                    .frame(width: 34, height: 34)
+                    .background(selected ? Theme.accentFill : Color.clear, in: RoundedRectangle(cornerRadius: 9))
+                    .overlay(alignment: .topTrailing) {
+                        if page == .secrets, model.jobs.contains(where: { $0.secretsAllowed == false }) {
+                            Circle().fill(Theme.warning).frame(width: 9, height: 9)
+                                .overlay(Circle().strokeBorder(Theme.sidebar, lineWidth: 2).padding(-2))
+                                .offset(x: 2, y: -2)
+                                .help("A job waits for your OK")
+                        } else if page == .chat, model.unreadMessages > 0 {
+                            Text("\(model.unreadMessages)")
+                                .font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
+                                .padding(.horizontal, 5).padding(.vertical, 1)
+                                .background(Theme.unread, in: Capsule())
+                                .overlay(Capsule().strokeBorder(Theme.sidebar, lineWidth: 2).padding(-2))
+                                .offset(x: 6, y: -5)
+                        }
+                    }
+                Text(page.rawValue)
+                    .font(.system(size: 11, weight: selected ? .semibold : .medium))
+                    .foregroundStyle(selected ? .primary : .secondary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(page == .chat && model.unreadMessages > 0 ? "Chat, \(model.unreadMessages) new" : page.rawValue)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 
@@ -47,8 +104,6 @@ struct LogsView: View {
         let shownID = model.logRunID ?? runs.first?.id
         VStack(spacing: 0) {
             HStack(spacing: 8) {
-                RunsWindowTabs()
-                Spacer().frame(width: 6)
                 Segments(items: RunFilter.allCases, selection: $model.logFilter, fill: false) { filter, _ in Text(filter.title) }
                     .fixedSize()
                 FilterField(prompt: "Filter by job", text: $model.logJobFilter).frame(width: 220)
@@ -119,7 +174,7 @@ struct LogsView: View {
         }
     }
 
-    /// Scrolls to a run opened from elsewhere (the popover, a message, the
+    /// Scrolls to a run opened from elsewhere (the Runs page, a message, the
     /// calendar). Its day first: rows of a day not drawn yet cannot be found.
     private func reveal(_ id: String?, in days: [RunDay], _ proxy: ScrollViewProxy) {
         guard let id, let day = days.first(where: { $0.runs.contains { $0.id == id } }) else { return }

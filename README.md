@@ -121,9 +121,9 @@ run also gets `LOCALCRON_JOB_ID`, its own id in `LOCALCRON_RUN_ID` (also as
 A job should just run. When something needs you, a run can say so:
 
 - `localcron message "The backup disk is 95% full"` (or the MCP tool
-  `send_message`): shown in the app's **Messages** tab. The menu bar icon
-  gets a blue dot until you read it, and the popover opens at that tab. A
-  run sends at most 3 messages.
+  `send_message`): shown on the **Chat** page of the app window (click the
+  menu bar icon), one channel per job, under the run that sent it. The menu bar icon gets a blue dot
+  until you read it. A run sends at most 3 messages.
 - `localcron report error --note "3 files were not copied"` (or
   `set_run_status`): how the work went, apart from the exit code. A reported
   error shows as a failed run, also when the program ended with code 0.

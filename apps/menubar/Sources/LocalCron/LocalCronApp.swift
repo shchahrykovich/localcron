@@ -1,8 +1,8 @@
 import LocalCronKit
 import SwiftUI
 
-/// An AppKit entry point, not a SwiftUI App: the app has no windows of its
-/// own, only the menu bar icon and its popover (StatusItemController).
+/// An AppKit entry point, not a SwiftUI App: the menu bar icon and the app
+/// window it opens (StatusItemController).
 @main
 enum LocalCronApp {
     static func main() {

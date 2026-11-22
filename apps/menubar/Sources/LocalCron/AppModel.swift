@@ -18,25 +18,38 @@ final class AppModel {
         case failed(String)
     }
 
-    enum Tab: String, CaseIterable, Hashable {
-        case jobs = "Jobs", runs = "Runs", messages = "Messages", secrets = "Secrets"
-    }
-
-    /// The Runs tab as a list, as a month, or as the tokens agents used.
+    /// The Runs page as a list, as a month, or as the tokens agents used.
     enum RunsMode: String, CaseIterable, Hashable {
         case list = "List", calendar = "Calendar", usage = "Usage"
     }
 
-    /// What the window shows in place of the tabs.
+    /// What the Jobs and Secrets pages show: their list, or an editor in
+    /// its place.
     enum Page: Equatable {
-        case tabs
+        case list
         case editor(JobDraft)
         case secretEditor(SecretDraft)
     }
 
-    /// The tabs of the Runs window: the calendar, or every log.
-    enum RunsWindowTab: String, CaseIterable, Hashable {
-        case calendar = "Calendar", logs = "Logs"
+    /// The pages of the app window, in its left rail, and Settings at the
+    /// bottom of it. The window opens at the page the user left.
+    enum WindowPage: String, CaseIterable, Hashable {
+        case jobs = "Jobs", runs = "Runs", calendar = "Calendar", logs = "Logs", chat = "Chat", secrets = "Secrets"
+        case settings = "Settings"
+
+        static let defaultsKey = "windowPage"
+
+        var symbol: String {
+            switch self {
+            case .jobs: "list.bullet.rectangle"
+            case .runs: "clock.arrow.circlepath"
+            case .secrets: "key"
+            case .calendar: "calendar"
+            case .logs: "doc.text"
+            case .chat: "bubble.left.and.bubble.right"
+            case .settings: "gearshape"
+            }
+        }
     }
 
     let client = DaemonClient()
@@ -49,24 +62,19 @@ final class AppModel {
     var daemonProblem: String?
     var serviceNote: String?
     var update: UpdateState = .idle
-    var message: String?
-    var messageFailed = false
+    /// Why the last action failed, in the footer. A success says nothing:
+    /// the user sees its result in the window.
+    var actionError: String?
     /// The last result of a Coding agents button, shown under that button in
     /// Settings. `at` makes a second click with the same result visible too.
     var agentResult: (action: AppMenu.Action, feedback: Feedback, at: Date)?
     var busy = false
-    var tab: Tab = .jobs {
-        didSet { if tab == .messages { Task { await markMessagesSeen() } } }
-    }
-    var page: Page = .tabs
+    var page: Page = .list
     /// Messages from runs, newest first.
     var messages: [Message] = []
-    /// Messages that were unread when the user opened the tab: they stay
-    /// marked as new until the popover closes.
-    var newMessageIDs: Set<UInt64> = []
     var runsMode: RunsMode = .list
     var runFilter: RunFilter = .all
-    /// The Runs tab shows only jobs whose id contains this.
+    /// The Runs page shows only jobs whose id contains this.
     var runJobFilter = ""
     /// The next times of each job that is on, for the Today strip and the
     /// calendars, from each job's next run on: a time a run early took is
@@ -83,9 +91,28 @@ final class AppModel {
     /// Many more runs than `runs`, for the calendars and the Logs tab.
     /// Loaded while one is shown.
     var history: [Run] = []
-    /// The Runs window: its tab, the run whose log the Logs tab shows, and
+    /// The app window: its page, the run whose log the Logs page shows, and
     /// the filters of its list.
-    var runsWindowTab: RunsWindowTab = .calendar
+    var windowPage = WindowPage(rawValue: UserDefaults.standard.string(forKey: WindowPage.defaultsKey) ?? "") ?? .jobs {
+        didSet {
+            UserDefaults.standard.set(windowPage.rawValue, forKey: WindowPage.defaultsKey)
+            if windowPage == .chat, oldValue != .chat { chatShown() }
+        }
+    }
+    /// The app window is the key window: the user looks at its page.
+    var appWindowKey = false {
+        didSet {
+            if appWindowKey, !oldValue, windowPage == .chat { chatShown(again: true) }
+            if appWindowKey != oldValue { pollNow() }
+        }
+    }
+    /// The channel of the Chat page: one job, or every job with nil.
+    var chatJob: String? {
+        didSet { if chatJob != oldValue { chatShown() } }
+    }
+    /// The oldest message that was unread when the channel came into view:
+    /// the "New" line stays above it while the user reads.
+    var chatNewFrom: UInt64?
     var logRunID: String?
     var logFilter: RunFilter = .all
     var logJobFilter = ""
@@ -104,26 +131,12 @@ final class AppModel {
     var dismissedRuns = Set(UserDefaults.standard.stringArray(forKey: DismissedFailures.defaultsKey) ?? []) {
         didSet { UserDefaults.standard.set(dismissedRuns.sorted(), forKey: DismissedFailures.defaultsKey) }
     }
-    /// Set by StatusItemController: they open its windows.
+    /// Set by StatusItemController: they open the app window, `openSettings`
+    /// at its Settings page.
     var openSettings: (SettingsPage?) -> Void = { _ in }
-    var openWeek: () -> Void = {}
+    var openAppWindow: () -> Void = {}
     /// Ticks every 30 s, so times such as "in 20 min" stay right.
     var now = Date()
-    /// The popover is open: poll often. With unread messages it opens at
-    /// the Messages tab, so what needs the user comes first.
-    var windowOpen = false {
-        didSet {
-            if windowOpen && !oldValue {
-                if unreadMessages > 0, page == .tabs {
-                    tab = .messages
-                } else if !failedJobs.isEmpty, page == .tabs {
-                    tab = .jobs
-                }
-                pollNow()
-            }
-            if !windowOpen { newMessageIDs = [] }
-        }
-    }
 
     private var refreshTask: Task<Void, Never>?
     private var updateTask: Task<Void, Never>?
@@ -163,13 +176,14 @@ final class AppModel {
         guard !started else { return }
         started = true
         registerDaemon()
-        if inBundle, let problem = OpenAtLogin().turnOnAtFirstLaunch() { say(problem, failed: true) }
+        if inBundle, let problem = OpenAtLogin().turnOnAtFirstLaunch() { showError(problem) }
         refreshTask = Task { [weak self] in
             await self?.registerAgainIfStale()
             while !Task.isCancelled {
                 await self?.refresh()
-                // Every 3 s while the window is open, every 30 s otherwise.
-                let open = self?.windowOpen ?? false
+                // Every 3 s while the app window is in front, every 30 s
+                // otherwise.
+                let open = self?.appWindowKey ?? false
                 await self?.sleep(seconds: open ? 3 : 30)
             }
         }
@@ -309,15 +323,12 @@ final class AppModel {
         return paused ? past : past + TimeMark.planned(planned)
     }
 
-    // MARK: Messages
+    // MARK: Errors
 
-    func say(_ text: String, failed: Bool = false) {
-        message = text
-        messageFailed = failed
-    }
-
-    func say(_ feedback: Feedback) {
-        say(feedback.summary, failed: feedback.failed)
+    /// Shows why an action failed in the footer, until the next action
+    /// succeeds or the user clicks it.
+    func showError(_ text: String) {
+        actionError = text
     }
 
     /// Runs a daemon call and reports its error in the footer.
@@ -325,10 +336,11 @@ final class AppModel {
     private func perform<T>(_ what: String, _ body: () async throws -> T) async -> T? {
         do {
             let value = try await body()
+            actionError = nil
             await refresh()
             return value
         } catch {
-            say("\(what): \(error.localizedDescription)", failed: true)
+            showError("\(what): \(error.localizedDescription)")
             return nil
         }
     }
@@ -342,48 +354,35 @@ final class AppModel {
         if job.secretsAllowed == false {
             guard await allowSecrets(job) else { return }
         }
-        if let run = await perform("Could not run \(job.id)", { try await client.runJob(id: job.id, early: early) }) {
-            let instead = run.dueAt.flatMap(ApiDate.parse).map { " It takes the place of the run \(Formatting.next($0))." } ?? ""
-            say(run.status == .skipped ? "\(job.id) was not started: \(run.message)" : "\(job.id) started (\(run.id)).\(instead)",
-                failed: run.status == .skipped)
+        if let run = await perform("Could not run \(job.id)", { try await client.runJob(id: job.id, early: early) }),
+           run.status == .skipped {
+            showError("\(job.id) was not started: \(run.message)")
         }
     }
 
     /// Stop: SIGTERM, then SIGKILL after 10 s. Kill: SIGKILL now.
     func cancel(_ run: Run, kill: Bool = false) async {
         let verb = kill ? "kill" : "stop"
-        guard let result = await perform("Could not \(verb) \(run.id)", { try await client.cancelRun(id: run.id, force: kill) })
-        else { return }
-        if result.canceled {
-            say(kill ? "Killed \(run.id)." : "Stopping \(run.id).")
-        } else if result.run.status.isFinished {
-            say("\(run.id) had already finished.")
-        } else {
-            say(kill ? "\(run.id) is already killed." : "\(run.id) is already stopping. Kill Now ends it at once.")
-        }
+        await perform("Could not \(verb) \(run.id)") { try await client.cancelRun(id: run.id, force: kill) }
     }
 
     func stopAll() async {
-        let runs = activeRuns
-        var stopped = 0
-        for run in runs {
+        for run in activeRuns {
             do {
-                if try await client.cancelRun(id: run.id).canceled { stopped += 1 }
+                _ = try await client.cancelRun(id: run.id)
             } catch {
-                say("Could not stop \(run.id): \(error.localizedDescription)", failed: true)
+                showError("Could not stop \(run.id): \(error.localizedDescription)")
                 await refresh()
                 return
             }
         }
+        actionError = nil
         await refresh()
-        say(stopped == 0 ? "No run to stop." : "Stopping \(stopped) run\(stopped == 1 ? "" : "s").")
     }
 
     func setPaused(_ paused: Bool) async {
-        let what = paused ? "Could not pause" : "Could not resume"
-        if await perform(what, { try await client.setConfig(SetConfigParams(paused: paused)) }) != nil {
-            say(paused ? "Paused: no scheduled run starts. Run Now still works."
-                       : "Resumed. Times missed while paused are not run.")
+        await perform(paused ? "Could not pause" : "Could not resume") {
+            try await client.setConfig(SetConfigParams(paused: paused))
         }
     }
 
@@ -392,9 +391,7 @@ final class AppModel {
     }
 
     func delete(_ job: JobView) async {
-        if await perform("Could not delete \(job.id)", { try await client.removeJob(id: job.id) }) == true {
-            say("\(job.id) deleted.")
-        }
+        await perform("Could not delete \(job.id)") { try await client.removeJob(id: job.id) }
     }
 
     /// Saves the editor's job. Returns the error to show in the editor.
@@ -406,17 +403,16 @@ final class AppModel {
         }
         do {
             let result = try await client.setJob(job, replace: !draft.isNew)
+            actionError = nil
             await refresh()
-            let next = result.job.nextRun.flatMap(ApiDate.parse).map { ", next run \(Formatting.next($0))" } ?? ""
-            say("\(job.id) saved: \(result.job.scheduleText)\(next).")
-            page = .tabs
-            tab = .jobs
+            page = .list
+            windowPage = .jobs
             if result.job.secretsAllowed == false {
                 await allowSecrets(result.job)
             }
             if !result.missingSecrets.isEmpty {
                 let names = result.missingSecrets.map(\.name).joined(separator: ", ")
-                say("\(job.id) saved. Not set yet: \(names). Set them in Secrets; its runs fail until then.", failed: true)
+                showError("\(job.id) saved. Not set yet: \(names). Set them in Secrets; its runs fail until then.")
             }
             return nil
         } catch {
@@ -443,12 +439,11 @@ final class AppModel {
         case let .failure(e): return e.message
         }
         do {
-            let result = try await client.setSecret(params)
+            _ = try await client.setSecret(params)
+            actionError = nil
             await refresh()
-            let what = result.created ? "stored" : params.value == nil ? "described" : "replaced"
-            say("\(params.name) \(what)." + (result.secret.usedBy.isEmpty ? "" : " Used by \(result.secret.usedBy.joined(separator: ", "))."))
-            page = .tabs
-            tab = .secrets
+            page = .list
+            windowPage = .secrets
             return nil
         } catch {
             return error.localizedDescription
@@ -456,11 +451,10 @@ final class AppModel {
     }
 
     func delete(_ secret: SecretInfo) async {
-        guard let result = await perform("Could not delete \(secret.name)", { try await client.removeSecret(name: secret.name) })
+        guard let result = await perform("Could not delete \(secret.name)", { try await client.removeSecret(name: secret.name) }),
+              !result.usedBy.isEmpty
         else { return }
-        say(result.usedBy.isEmpty ? "\(secret.name) deleted."
-                                  : "\(secret.name) deleted. Runs of \(result.usedBy.joined(separator: ", ")) fail until it is set again.",
-            failed: !result.usedBy.isEmpty)
+        showError("\(secret.name) deleted. Runs of \(result.usedBy.joined(separator: ", ")) fail until it is set again.")
     }
 
     /// The user reads what the job runs and what changed since the last OK,
@@ -476,12 +470,10 @@ final class AppModel {
             guard try await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "allow the job \(j.id) to read its secrets")
             else { return false }
         } catch {
-            say("\(j.id) was not allowed: \(error.localizedDescription)", failed: true)
+            showError("\(j.id) was not allowed: \(error.localizedDescription)")
             return false
         }
-        guard await perform("Could not allow \(j.id)", { try await client.allowJobSecrets(j) }) != nil else { return false }
-        say("\(j.id) may read its secrets now.")
-        return true
+        return await perform("Could not allow \(j.id)", { try await client.allowJobSecrets(j) }) != nil
     }
 
     func preview(_ schedule: String) async -> Result<PreviewScheduleResult, Error> {
@@ -500,18 +492,20 @@ final class AppModel {
         }
     }
 
+    /// The Jobs page with a new job's editor.
     func newJob() {
         page = .editor(JobDraft())
+        windowPage = .jobs
+        openAppWindow()
     }
 
     func edit(_ job: JobView) {
         page = .editor(JobDraft(job: job.job))
     }
 
-    /// The Runs tab, filtered to one job.
+    /// The Runs page, filtered to one job.
     func showRuns(jobID: String) {
-        page = .tabs
-        tab = .runs
+        windowPage = .runs
         runsMode = .list
         runFilter = .all
         runJobFilter = jobID
@@ -519,8 +513,7 @@ final class AppModel {
 
     /// The tokens of one job, or of all with nil.
     func showUsage(jobID: String?) {
-        page = .tabs
-        tab = .runs
+        windowPage = .runs
         runsMode = .usage
         usageJob = jobID
     }
@@ -535,13 +528,12 @@ final class AppModel {
 
     // MARK: Messages from runs
 
-    /// While the user looks at the Messages tab, its unread messages become
-    /// read; they stay marked as new until the popover closes.
+    /// Unread messages of the channel on the Chat page become read while
+    /// the app window is in front. The "New" line stays above them.
     func markMessagesSeen() async {
-        guard windowOpen, page == .tabs, tab == .messages else { return }
-        let unread = messages.filter { !$0.read }.map(\.id)
+        guard appWindowKey, windowPage == .chat else { return }
+        let unread = messages.filter { m in !m.read && (chatJob == nil || m.jobId == chatJob) }.map(\.id)
         guard !unread.isEmpty else { return }
-        newMessageIDs.formUnion(unread)
         guard let result = try? await client.readMessages(ids: unread) else { return }
         for i in messages.indices where unread.contains(messages[i].id) { messages[i].read = true }
         status?.unreadMessages = result.unread
@@ -551,10 +543,26 @@ final class AppModel {
         await perform("Could not remove the message") { try await client.removeMessages(ids: [message.id]) }
     }
 
-    func clearMessages() async {
-        if let result = await perform("Could not remove the messages", { try await client.removeMessages() }) {
-            say(result.changed == 1 ? "Removed 1 message." : "Removed \(result.changed) messages.")
-        }
+    /// Removes these messages, or every message with nil.
+    func removeMessages(_ ids: [UInt64]? = nil) async {
+        await perform("Could not remove the messages") { try await client.removeMessages(ids: ids) }
+    }
+
+    /// The app window at the Chat page, at one job's channel or at the
+    /// channel shown last.
+    func showChat(jobID: String? = nil) {
+        if let jobID { chatJob = jobID }
+        windowPage = .chat
+        openAppWindow()
+    }
+
+    /// A channel came into view: the "New" line goes above its oldest unread
+    /// message, then its messages become read. When the window only comes
+    /// to the front again and nothing is unread, the line stays where it is.
+    private func chatShown(again: Bool = false) {
+        let first = Chat.firstUnread(messages, jobID: chatJob)
+        if first != nil || !again { chatNewFrom = first }
+        Task { await markMessagesSeen() }
     }
 
     /// The run a message came from, when the daemon still keeps it.
@@ -564,23 +572,23 @@ final class AppModel {
         showLog(runID: run.id)
     }
 
-    /// The Runs window at the calendar.
+    /// The app window at the Calendar page.
     func showCalendar() {
-        runsWindowTab = .calendar
-        openWeek()
+        windowPage = .calendar
+        openAppWindow()
     }
 
-    /// The Runs window at the Logs tab, with the run chosen last.
+    /// The app window at the Logs page, with the run chosen last.
     func showLogs() {
-        runsWindowTab = .logs
-        openWeek()
+        windowPage = .logs
+        openAppWindow()
     }
 
-    /// The Runs window at the Logs tab, with this run's log.
+    /// The app window at the Logs page, with this run's log.
     func showLog(runID: String) {
         logRunID = runID
-        runsWindowTab = .logs
-        openWeek()
+        windowPage = .logs
+        openAppWindow()
     }
 
     func revealLog(_ run: Run) {
@@ -589,7 +597,7 @@ final class AppModel {
         if FileManager.default.fileExists(atPath: path) {
             NSWorkspace.shared.activateFileViewerSelecting([url])
         } else {
-            say("The log file of \(run.id) is gone.", failed: true)
+            showError("The log file of \(run.id) is gone.")
         }
     }
 
@@ -603,12 +611,10 @@ final class AppModel {
     /// The run's interactive console, in kitty or Terminal.
     func openTerminal(_ run: Run) {
         guard let command = run.console else {
-            say("\(run.id) has no console: it runs without one, or it has ended. Claude jobs get one when tmux is installed.",
-                failed: true)
+            showError("\(run.id) has no console: it runs without one, or it has ended. Claude jobs get one when tmux is installed.")
             return
         }
-        open(command, runID: run.id, title: "\(run.id) console", dir: nil, note: nil, suffix: "",
-             done: "The console of \(run.id) opens in %@. Leave it with Ctrl-B, then D: the run goes on.")
+        open(command, runID: run.id, title: "\(run.id) console", dir: nil, note: nil, suffix: "")
     }
 
     /// Open a finished Claude run's session again, in the job's folder:
@@ -617,25 +623,23 @@ final class AppModel {
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
         guard let session = run.sessionId, let job = job(run.jobId),
               let command = ConsoleScript.resumeCommand(session: session, shell: shell) else {
-            say("\(run.id) has no Claude session to resume.", failed: true)
+            showError("\(run.id) has no Claude session to resume.")
             return
         }
         open(command, runID: run.id, title: "\(run.id) resume", dir: job.job.dir, note: "Resume the session of \(run.id).",
-             suffix: "-resume", done: "The session of \(run.id) opens in %@.")
+             suffix: "-resume")
     }
 
-    /// Run `command` in a new window of the chosen terminal; `done` has %@ for its name.
-    private func open(_ command: String, runID: String, title: String, dir: String?, note: String?, suffix: String,
-                      done: String) {
+    /// Run `command` in a new window of the chosen terminal.
+    private func open(_ command: String, runID: String, title: String, dir: String?, note: String?, suffix: String) {
         if consoleTerminal == .kitty, let kitty = kittyURL {
             let process = Process()
             process.executableURL = kitty.appendingPathComponent("Contents/MacOS/kitty")
             process.arguments = ConsoleTerminal.kittyArguments(command: command, runID: runID, title: title, dir: dir)
             do {
                 try process.run()
-                say(done.replacingOccurrences(of: "%@", with: "kitty"))
             } catch {
-                say("Could not open kitty: \(error.localizedDescription)", failed: true)
+                showError("Could not open kitty: \(error.localizedDescription)")
             }
             return
         }
@@ -644,9 +648,8 @@ final class AppModel {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             NSWorkspace.shared.open(try ConsoleScript.write(runID: runID, command: command, in: folder, workDir: dir,
                                                             note: note, suffix: suffix))
-            say(done.replacingOccurrences(of: "%@", with: "Terminal"))
         } catch {
-            say("Could not open Terminal for \(runID): \(error.localizedDescription)", failed: true)
+            showError("Could not open Terminal for \(runID): \(error.localizedDescription)")
         }
     }
 
@@ -661,7 +664,7 @@ final class AppModel {
     func openHelp() {
         let page = Bundle.main.bundleURL.appendingPathComponent(BundleLayout.helpPage)
         guard FileManager.default.fileExists(atPath: page.path) else {
-            say("The help page is missing: \(page.path). It is made by scripts/build-app.sh.", failed: true)
+            showError("The help page is missing: \(page.path). It is made by scripts/build-app.sh.")
             return
         }
         NSApp.activate()
@@ -698,7 +701,7 @@ final class AppModel {
         } catch {
             feedback = .failed("Could not install the command line tool", error.localizedDescription)
         }
-        say(feedback)
+        if feedback.failed { showError(feedback.summary) }
         agentResult = (.installCLI, feedback, Date())
         return feedback
     }
@@ -724,7 +727,6 @@ final class AppModel {
     @discardableResult
     func installClaude() async -> Feedback {
         busy = true
-        say("Adding \(Instance.current.appName) to Claude Code…")
         let path = mcpCommandPath()
         let feedback = await Task.detached { () -> Feedback in
             do {
@@ -740,7 +742,7 @@ final class AppModel {
             }
         }.value
         busy = false
-        say(feedback)
+        if feedback.failed { showError(feedback.summary) }
         agentResult = (.installClaude, feedback, Date())
         return feedback
     }
@@ -759,25 +761,23 @@ final class AppModel {
         } catch {
             feedback = .failed("Could not add \(Instance.current.appName) to Codex", error.localizedDescription)
         }
-        say(feedback)
+        if feedback.failed { showError(feedback.summary) }
         agentResult = (.installCodex, feedback, Date())
         return feedback
     }
 
-    func copy(_ text: String, said: String? = nil) {
+    func copy(_ text: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
-        say(said ?? "Copied: \(text)")
     }
 
     /// Copies a prompt that re-creates `jobs` (all when nil) on another Mac:
-    /// paste it into Claude Code or Codex there. The editor passes
-    /// `unsavedChanges` when its form differs from the saved job.
-    func copySharePrompt(_ jobs: [JobView]? = nil, unsavedChanges: Bool = false) {
+    /// paste it into Claude Code or Codex there.
+    func copySharePrompt(_ jobs: [JobView]? = nil) {
         let jobs = (jobs ?? JobGroups.ordered(self.jobs)).map(\.job)
         guard !jobs.isEmpty else { return }
         let text = SharePrompt.text(jobs: jobs, secrets: secrets, appName: Instance.current.appName)
-        copy(text, said: SharePrompt.copiedMessage(jobIDs: jobs.map(\.id), unsavedChanges: unsavedChanges))
+        copy(text)
     }
 
     var menuContext: AppMenu.Context {
@@ -846,7 +846,6 @@ final class AppModel {
         await Task.detached { Uninstaller().removeFiles() }.value
         busy = false
         NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL])
-        say("\(Instance.current.appName) is uninstalled. Move \(Instance.current.appName).app to the Trash.")
         try? await Task.sleep(for: .seconds(4))
         NSApp.terminate(nil)
     }

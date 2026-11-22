@@ -156,7 +156,7 @@ struct SecretEditorView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Button("Cancel") { model.page = .tabs }
+                Button("Cancel") { model.page = .list }
                     .buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.accent)
                     .keyboardShortcut(.cancelAction)
                 Spacer()

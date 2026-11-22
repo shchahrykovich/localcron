@@ -18,7 +18,7 @@ struct JobEditorView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Button("Cancel") { model.page = .tabs }
+                Button("Cancel") { model.page = .list }
                     .buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.accent)
                     .keyboardShortcut(.cancelAction)
                 Spacer()
@@ -27,7 +27,7 @@ struct JobEditorView: View {
                 if !draft.isNew, let saved = model.job(draft.id) {
                     IconButton(symbol: "square.and.arrow.up",
                                help: "Copy a prompt for Claude Code or Codex on another Mac that makes this job there, as it is saved") {
-                        model.copySharePrompt([saved], unsavedChanges: draft != JobDraft(job: saved.job))
+                        model.copySharePrompt([saved])
                     }
                 }
                 SmallButton(saving ? "Saving…" : "Save", prominent: true) { save() }

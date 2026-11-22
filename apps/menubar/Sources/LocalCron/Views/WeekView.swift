@@ -74,8 +74,6 @@ struct WeekView: View {
 
     private func toolbar(_ dates: [Date]) -> some View {
         HStack(spacing: 8) {
-            RunsWindowTabs()
-            Spacer().frame(width: 6)
             HStack(spacing: 0) {
                 IconButton(symbol: "chevron.left", help: days == 7 ? "Previous week" : "Previous day", size: 26) { move(-1) }
                 Button("Today") { anchor = Date() }.buttonStyle(.plain).font(.system(size: 12)).padding(.horizontal, 10)

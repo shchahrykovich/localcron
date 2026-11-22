@@ -3,57 +3,29 @@ import LocalCronKit
 import Observation
 import SwiftUI
 
-/// The menu bar icon. A left click toggles the LocalCron window (a popover),
-/// a right click shows the app commands. It also owns the Settings and week
-/// windows. This replaces SwiftUI's
-/// MenuBarExtra, which cannot open its window from code.
+/// The menu bar icon. A left click opens the app window at the page the user
+/// left (jobs, runs, calendar, logs, chat, secrets, settings); a right click
+/// shows the app commands. This replaces SwiftUI's MenuBarExtra, which
+/// cannot open its window from code.
 @MainActor
-final class StatusItemController: NSObject, NSPopoverDelegate {
+final class StatusItemController: NSObject {
     private unowned let model: AppModel
     /// Variable: the "Clock and text" style adds text.
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-    private let popover = NSPopover()
-    private var settingsWindow: AppWindow?
-    private var weekWindow: AppWindow?
-    /// When the popover last closed. A click on the icon first closes the
-    /// popover, then reaches `clicked`; without this check the same click
-    /// would open it again.
-    private var closedAt = Date.distantPast
-    /// While the popover is shown: a click in another app, and this app
-    /// losing focus (kitty opened), close it. `.transient` alone misses
-    /// clicks in other apps once this app is not the active one.
-    private var outsideClicks: Any?
-    private var resignActive: NSObjectProtocol?
+    /// The window with every page, as in Slack.
+    private var appWindow: AppWindow?
 
     init(model: AppModel) {
         self.model = model
         super.init()
-        // Semi-transient: the folder panel and alerts of this app do not
-        // close it; a click in another app does.
-        // Closes on a click anywhere outside, other apps included
-        // (.semitransient ignores clicks in other apps).
-        popover.behavior = .transient
-        popover.delegate = self
-        let main = MainView(perform: { [weak self] action in self?.perform(action, fromWindow: true) })
-        let content = NSHostingController(rootView: main.environment(model).frame(width: 480, height: 600))
-        content.sizingOptions = .preferredContentSize
-        // After the controller: setting it resets contentSize.
-        popover.contentViewController = content
-        popover.contentSize = NSSize(width: 480, height: 600)
         let windowPerform: (AppMenu.Action) -> Void = { [weak self] action in self?.perform(action, fromWindow: true) }
-        settingsWindow = AppWindow(title: "\(Instance.current.appName) Settings", size: NSSize(width: 780, height: 560),
-                                   minSize: NSSize(width: 640, height: 420)) { [model] in
-            AnyView(WindowFrame { SettingsView(perform: windowPerform) }.environment(model))
-        }
-        weekWindow = AppWindow(title: "\(Instance.current.appName) Runs", size: NSSize(width: 1120, height: 700),
-                               minSize: NSSize(width: 760, height: 480)) { [model] in
-            AnyView(WindowFrame { RunsWindowView(perform: windowPerform) }.environment(model))
+        appWindow = AppWindow(title: Instance.current.appName, size: NSSize(width: 1180, height: 720),
+                              minSize: NSSize(width: 820, height: 600), frameName: "AppWindow",
+                              onKey: { [model] key in model.appWindowKey = key }) { [model] in
+            AnyView(WindowFrame { AppWindowView(perform: windowPerform) }.environment(model))
         }
         model.openSettings = { [weak self] page in self?.showSettings(page) }
-        model.openWeek = { [weak self] in
-            self?.popover.performClose(nil)
-            self?.weekWindow?.show()
-        }
+        model.openAppWindow = { [weak self] in self?.appWindow?.show() }
         if let button = item.button {
             button.target = self
             button.action = #selector(clicked)
@@ -114,63 +86,19 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     @objc private func clicked() {
         let event = NSApp.currentEvent
         if event?.type == .rightMouseDown || event?.modifierFlags.contains(.control) == true {
-            popover.performClose(nil)
             // Open the menu after the button's mouse tracking ends, so the
             // menu does not take the button's mouse-up.
             RunLoop.main.perform(inModes: [.default]) { MainActor.assumeIsolated { self.showMenu() } }
-        } else if popover.isShown {
-            popover.performClose(nil)
-        } else if Date().timeIntervalSince(closedAt) > 0.3 {
-            showWindow()
+        } else {
+            appWindow?.show()
         }
     }
 
-    /// Settings, at `page` or at the page shown last.
+    /// The app window at Settings, at `page` or at the section shown last.
     func showSettings(_ page: SettingsPage?) {
         if let page { UserDefaults.standard.set(page.rawValue, forKey: SettingsView.pageKey) }
-        popover.performClose(nil)
-        settingsWindow?.show()
-    }
-
-    func showWindow() {
-        guard let button = item.button, !popover.isShown else { return }
-        NSApp.activate()
-        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-        popover.contentViewController?.view.window?.makeKey()
-        model.windowOpen = true
-        watchOutside()
-    }
-
-    /// performClose asks popoverShouldClose, so an alert or panel of this app
-    /// keeps the popover open.
-    private func watchOutside() {
-        stopWatchingOutside()
-        outsideClicks = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] _ in
-            MainActor.assumeIsolated { self?.popover.performClose(nil) }
-        }
-        resignActive = NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification, object: nil,
-                                                              queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.popover.performClose(nil) }
-        }
-    }
-
-    private func stopWatchingOutside() {
-        if let outsideClicks { NSEvent.removeMonitor(outsideClicks) }
-        if let resignActive { NotificationCenter.default.removeObserver(resignActive) }
-        outsideClicks = nil
-        resignActive = nil
-    }
-
-    /// Stay open while an alert or the folder panel opened from the popover
-    /// runs: a click in it is outside the popover, but the user is not done.
-    func popoverShouldClose(_ popover: NSPopover) -> Bool {
-        NSApp.modalWindow == nil
-    }
-
-    func popoverDidClose(_ notification: Notification) {
-        closedAt = Date()
-        model.windowOpen = false
-        stopWatchingOutside()
+        model.windowPage = .settings
+        appWindow?.show()
     }
 
     // MARK: Right-click menu
@@ -236,29 +164,28 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     }
 
     /// Runs a command of the icon's menu or of the window. From the icon's
-    /// menu the window is closed, so a result is said in an alert; in the
-    /// window it goes to the footer.
+    /// menu the window may be closed, so a result is said in an alert; in
+    /// the window it goes to the footer.
     func perform(_ action: AppMenu.Action, fromWindow: Bool) {
         switch action {
         case .openWindow:
             // Menu actions run while the menu is closing; open the window after it.
-            DispatchQueue.main.async { self.showWindow() }
+            DispatchQueue.main.async { self.appWindow?.show() }
         case .newJob:
-            model.newJob()
-            DispatchQueue.main.async { self.showWindow() }
+            DispatchQueue.main.async { self.model.newJob() }
         case let .setPaused(paused):
             Task { @MainActor in await model.setPaused(paused) }
         case let .showLog(runID):
-            // The Runs window, at the Logs tab.
+            // The app window, at the Logs page.
             DispatchQueue.main.async { self.model.showLog(runID: runID) }
         case let .allowSecrets(jobID):
             guard let job = model.jobs.first(where: { $0.id == jobID }) else { return }
             Task { @MainActor in
                 // From the menu the footer is not seen: say a failure in an
                 // alert. Cancel leaves no message, so an old one is cleared.
-                model.message = nil
+                model.actionError = nil
                 let allowed = await model.allowSecrets(job)
-                if !allowed, !fromWindow, model.messageFailed, let why = model.message {
+                if !allowed, !fromWindow, let why = model.actionError {
                     alert(.failed("\(jobID) was not allowed", why))
                 }
             }
@@ -268,9 +195,9 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             guard let job = model.job(jobID) else { return }
             let early = action == .runEarly(jobID)
             Task { @MainActor in
-                model.message = nil
+                model.actionError = nil
                 await model.runNow(job, early: early)
-                if !fromWindow, model.messageFailed, let why = model.message { alert(.failed("\(jobID) did not start", why)) }
+                if !fromWindow, let why = model.actionError { alert(.failed("\(jobID) did not start", why)) }
             }
         case .copyMCPCommand: model.copy(model.mcpCommand)
         case let .copySharePrompt(jobID):

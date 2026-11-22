@@ -62,7 +62,7 @@ A new job runs in the current folder; `--dir` changes it.
 | `{{CLI}} runs [ID]` | Recent runs, newest first |
 | `{{CLI}} log RUN` | The output of a run |
 | `{{CLI}} next "S"` | The next times of a schedule |
-| `{{CLI}} message "TEXT"` | From inside a run: a message to you, in the app's Messages tab |
+| `{{CLI}} message "TEXT"` | From inside a run: a message to you, in the app's Chat |
 | `{{CLI}} report success\|error [--note TEXT]` | From inside a run: how its work went, apart from the exit code |
 | `{{CLI}} messages` | The messages from runs, newest first |
 | `{{CLI}} config` | Show or change the settings: `--max-concurrent N`, `--log-budget-mb N` |
@@ -168,7 +168,8 @@ A job should just run. When something needs you, a run can tell you:
 
 - **A message**: `{{CLI}} message "The backup disk is 95% full"` in a shell
   job, or the `send_message` tool in an agent job. It shows in the
-  **Messages** tab, and the menu bar icon gets a blue dot until you read it.
+  **Chat** page of the app window (click the menu bar icon), one channel
+  per job, under the run that sent it. The menu bar icon gets a blue dot until you read it.
   A run sends at most 3, of at most 2000 characters each. Use it only for
   what you must know or do, never for progress.
 - **A status**: `{{CLI}} report error --note "3 files were not copied"`, or

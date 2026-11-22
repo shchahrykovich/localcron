@@ -1,7 +1,7 @@
 import LocalCronKit
 import SwiftUI
 
-/// The Runs tab: the runs by day, or a month calendar.
+/// The Runs page: the runs by day, a month calendar, or token usage.
 struct RunsView: View {
     @Environment(AppModel.self) private var model
 

@@ -29,7 +29,8 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     }
 }
 
-/// The Settings window: the pages on the left, the chosen page on the right.
+/// The Settings page of the app window: its sections on the left, the
+/// chosen section on the right.
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
     static let pageKey = "settingsPage"
@@ -38,19 +39,25 @@ struct SettingsView: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 2) {
-                ForEach(SettingsPage.allCases) { sidebarRow($0) }
-                Spacer()
-                Text("\(Instance.current.appName) \(model.version)")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-                    .padding(.horizontal, 10)
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Settings").font(.system(size: 15, weight: .bold))
+                    .padding(.horizontal, 14)
+                    .frame(height: 52, alignment: .leading)
+                Rectangle().fill(Theme.line).frame(height: 0.5)
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(SettingsPage.allCases) { sidebarRow($0) }
+                    Spacer()
+                    Text("\(Instance.current.appName) \(model.version)")
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                        .padding(.horizontal, 10)
+                }
+                .padding(.horizontal, 10)
+                .padding(.top, 8)
+                .padding(.bottom, 14)
             }
-            .padding(.horizontal, 10)
-            .padding(.top, 12)
-            .padding(.bottom, 14)
-            .frame(width: 200)
+            .frame(width: 230)
             .frame(maxHeight: .infinity)
-            .background(Theme.sidebar)
+            .background(Theme.ground)
             Rectangle().fill(Theme.line).frame(width: 0.5)
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
@@ -179,7 +186,7 @@ private struct GeneralPage: View {
                 SettingRow(title: "Open at login", detail: "The daemon runs jobs without the app; the app shows them.") {
                     Toggle("", isOn: $openAtLogin).labelsHidden().toggleStyle(.switch)
                         .onChange(of: openAtLogin) { _, on in
-                            if let problem = OpenAtLogin().choose(on) { model.say(problem, failed: true) }
+                            if let problem = OpenAtLogin().choose(on) { model.showError(problem) }
                             openAtLogin = OpenAtLogin().isOn
                         }
                 }

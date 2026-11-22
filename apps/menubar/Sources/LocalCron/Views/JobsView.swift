@@ -1,7 +1,7 @@
 import LocalCronKit
 import SwiftUI
 
-/// The Jobs tab: today's runs on a strip, jobs that wait for the user's
+/// The Jobs page: today's runs on a strip, jobs that wait for the user's
 /// OK, then all jobs in one card, the next to run first.
 struct JobsView: View {
     @Environment(AppModel.self) private var model

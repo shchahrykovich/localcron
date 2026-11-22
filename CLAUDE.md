@@ -93,8 +93,11 @@ LocalCron.app (Swift) ───────────────────�
   now may, found by `LOCALCRON_RUN_ID` (the daemon also sets
   `LOCAL_CRON_RUN_ID`); at most `MAX_PER_RUN` messages per run, kept in
   `messages.json` (`MAX_KEPT`, read ones dropped first). `status` has
-  `unread_messages`; the app draws a dot on its icon and opens the popover
-  at the Messages tab while one is unread, and marks them read there. A
+  `unread_messages`; the app draws a dot on its icon. The Chat page of the
+  app window has one channel per job: each run is a post with its status
+  and a View Log button, and the messages it sent under it (`ChatView`,
+  logic in `LocalCronKit/Chat.swift`); a channel's messages become read only while
+  that window is the key window. A
   reported error counts as a failed run in the app (`Run.failed`). Codex
   does not pass the run's environment to MCP servers, so the tools take
   `run_id` too.
@@ -105,8 +108,12 @@ LocalCron.app (Swift) ───────────────────�
 - `apps/menubar`: Swift package. `LocalCronKit` has the Swift copy of the API
   types, the socket client, the updater, and the CLI, Claude Code and Codex
   installers (note link + MCP registration); `LocalCron` is the AppKit
-  `NSStatusItem` + `NSPopover` app, which registers the daemon as an
-  `SMAppService` LaunchAgent.
+  `NSStatusItem` app, which registers the daemon as an `SMAppService`
+  LaunchAgent. There is no popover: a left click on the icon opens the app
+  window (`AppWindowView`), a Slack-style rail of pages (Jobs, Runs,
+  Calendar, Logs, Chat, Secrets, Settings at the bottom) at the page the
+  user left (`WindowPage`, saved in UserDefaults) and at its saved frame.
+  Its footer shows only errors (`actionError`): a success says nothing.
 
 ### Changing the socket API
 

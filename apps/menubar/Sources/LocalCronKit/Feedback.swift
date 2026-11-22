@@ -1,5 +1,6 @@
 // What a command tells the user when it finishes: the title and text of an
-// alert, and the same words in the window footer.
+// alert, and the same words under its button in Settings. The window footer
+// shows only a failed one.
 
 import Foundation
 
@@ -23,7 +24,8 @@ public struct Feedback: Equatable, Sendable {
             ? Feedback(title: "Command line tool installed",
                        detail: "\(link.path) links to this app. Open a new terminal and run: \(link.lastPathComponent) list")
             : Feedback(title: "Command line tool installed",
-                       detail: "\(link.path) links to this app, but \(link.deletingLastPathComponent().path) is not on PATH. Add it with:\n\(pathHint)")
+                       detail: "\(link.path) links to this app, but \(link.deletingLastPathComponent().path) is not on PATH. Add it with:\n\(pathHint)",
+                       failed: true)
     }
 
     public static func claudeInstalled(link: URL, claudeMD: URL, importAdded: Bool, mcp: ClaudeInstaller.MCPOutcome) -> Feedback {

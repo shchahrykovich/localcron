@@ -56,16 +56,6 @@ public enum SharePrompt {
         }
     }
 
-    /// The footer text after a copy. The editor copies the saved job, so with
-    /// `unsavedChanges` it says that the changes in the form are not in it.
-    public static func copiedMessage(jobIDs: [String], unsavedChanges: Bool = false) -> String {
-        let what = jobIDs.count == 1 ? jobIDs[0] : "\(jobIDs.count) jobs"
-        if unsavedChanges {
-            return "Copied a prompt for \(what) as it is saved, without your changes: save first to include them"
-        }
-        return "Copied a prompt for \(what): paste it into Claude Code or Codex on the other Mac"
-    }
-
     /// The prompt for `jobs`. `secrets` gives the descriptions of the secrets
     /// they name; `home` is this Mac's home folder.
     public static func text(jobs: [Job], secrets: [SecretInfo], home: String = NSHomeDirectory(),

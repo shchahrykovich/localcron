@@ -101,7 +101,7 @@ public enum RunText {
     }
 }
 
-/// The Runs tab's filter.
+/// The Runs page's filter.
 public enum RunFilter: String, CaseIterable, Identifiable, Sendable {
     case all, failed, working
 

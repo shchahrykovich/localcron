@@ -24,6 +24,12 @@ struct JobEditorView: View {
                 Spacer()
                 Text(draft.isNew ? "New Job" : "Edit \(draft.id)").font(.system(size: 13, weight: .semibold))
                 Spacer()
+                if !draft.isNew, let saved = model.job(draft.id) {
+                    IconButton(symbol: "square.and.arrow.up",
+                               help: "Copy a prompt for Claude Code or Codex on another Mac that makes this job there, as it is saved") {
+                        model.copySharePrompt([saved], unsavedChanges: draft != JobDraft(job: saved.job))
+                    }
+                }
                 SmallButton(saving ? "Saving…" : "Save", prominent: true) { save() }
                     .keyboardShortcut(.defaultAction)
                     .disabled(saving)

@@ -13,9 +13,21 @@ public enum AppMenu {
         /// A run more of the job (by id); `runEarly` runs its next
         /// scheduled time now instead.
         case runNow(String), runEarly(String)
-        case installCLI, installClaude, installCodex, copyMCPCommand, copySharePrompt
+        case installCLI, installClaude, installCodex, copyMCPCommand
+        /// A prompt that makes this job on another Mac; nil for every job.
+        case copySharePrompt(String?)
         case openLogsFolder, openHelp
         case checkForUpdates, settings, quit
+
+        /// The job of an entry in a list of jobs (Run a Job Now, Copy Job as
+        /// Prompt), which shows that job's icon.
+        public var jobInMenu: String? {
+            switch self {
+            case let .runNow(id): id
+            case let .copySharePrompt(id): id
+            default: nil
+            }
+        }
     }
 
     public struct Item: Equatable, Sendable {
@@ -124,8 +136,11 @@ public enum AppMenu {
             entries.append(.separator)
             entries.append(.submenu(title: "Run a Job Now", symbol: "play", detail: nil,
                                     entries: c.jobIDs.map { .item(Item(title: $0, action: .runNow($0))) }))
-            entries.append(.item(Item(title: "Copy All Jobs as Prompt", symbol: "square.and.arrow.up", action: .copySharePrompt,
-                                      detail: "For Claude Code or Codex on another Mac")))
+            // For Claude Code or Codex on another Mac. No detail: the window's
+            // menu writes a submenu's detail into its title.
+            entries.append(.submenu(title: "Copy Job as Prompt", symbol: "square.and.arrow.up", detail: nil,
+                                    entries: c.jobIDs.map { .item(Item(title: $0, action: .copySharePrompt($0))) }
+                                        + [.separator, .item(Item(title: "All Jobs", action: .copySharePrompt(nil)))]))
         }
         return entries + [
             .separator,

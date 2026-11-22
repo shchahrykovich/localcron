@@ -121,4 +121,13 @@ final class ClaudeConfigDirDraftTests: XCTestCase {
         XCTAssertEqual(draft.configDir, "", "the field is for claude jobs")
         XCTAssertEqual(try draft.job().get().env, shell.env)
     }
+
+    func testTheCopiedMessageNamesTheJobAndWarnsAboutUnsavedChanges() {
+        XCTAssertEqual(SharePrompt.copiedMessage(jobIDs: ["pr-review"]),
+                       "Copied a prompt for pr-review: paste it into Claude Code or Codex on the other Mac")
+        XCTAssertEqual(SharePrompt.copiedMessage(jobIDs: ["a", "b", "c"]),
+                       "Copied a prompt for 3 jobs: paste it into Claude Code or Codex on the other Mac")
+        XCTAssertEqual(SharePrompt.copiedMessage(jobIDs: ["pr-review"], unsavedChanges: true),
+                       "Copied a prompt for pr-review as it is saved, without your changes: save first to include them")
+    }
 }

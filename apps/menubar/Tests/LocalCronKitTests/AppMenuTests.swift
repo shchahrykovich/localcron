@@ -50,11 +50,16 @@ final class AppMenuTests: XCTestCase {
         XCTAssertTrue(titles(entries).contains("Help"), "not \"LocalCron Help\"")
     }
 
-    func testCopyAllJobsAsPromptOnlyWithJobsAndTheDaemon() {
-        let share = { (c: AppMenu.Context) in self.allItems(AppMenu.entries(c)).filter { $0.action == .copySharePrompt } }
-        XCTAssertEqual(share(context(jobIDs: ["nightly-tests"])).map(\.title), ["Copy All Jobs as Prompt"])
-        XCTAssertTrue(share(context(jobIDs: [])).isEmpty, "no jobs, nothing to share")
-        XCTAssertTrue(share(context(jobIDs: ["nightly-tests"], daemon: false)).isEmpty, "the daemon is not running")
+    func testCopyJobAsPromptListsEachJobAndAll() throws {
+        let entries = AppMenu.entries(context(jobIDs: ["nightly-tests", "pr-review"]))
+        XCTAssertFalse(titles(entries).contains("Copy All Jobs as Prompt"), "now inside the submenu")
+        let copy = try XCTUnwrap(submenu("Copy Job as Prompt", in: entries))
+        XCTAssertEqual(titles(copy.entries), ["nightly-tests", "pr-review", "All Jobs"])
+        XCTAssertEqual(allItems(copy.entries).map(\.action),
+                       [.copySharePrompt("nightly-tests"), .copySharePrompt("pr-review"), .copySharePrompt(nil)])
+        XCTAssertNil(submenu("Copy Job as Prompt", in: AppMenu.entries(context(jobIDs: []))), "no jobs, nothing to share")
+        XCTAssertNil(submenu("Copy Job as Prompt", in: AppMenu.entries(context(jobIDs: ["nightly-tests"], daemon: false))),
+                     "the daemon is not running")
     }
 
     func testTheMenuDoesNotListRunningOrNextRuns() throws {

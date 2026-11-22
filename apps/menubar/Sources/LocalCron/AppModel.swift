@@ -771,13 +771,13 @@ final class AppModel {
     }
 
     /// Copies a prompt that re-creates `jobs` (all when nil) on another Mac:
-    /// paste it into Claude Code or Codex there.
-    func copySharePrompt(_ jobs: [JobView]? = nil) {
+    /// paste it into Claude Code or Codex there. The editor passes
+    /// `unsavedChanges` when its form differs from the saved job.
+    func copySharePrompt(_ jobs: [JobView]? = nil, unsavedChanges: Bool = false) {
         let jobs = (jobs ?? JobGroups.ordered(self.jobs)).map(\.job)
         guard !jobs.isEmpty else { return }
         let text = SharePrompt.text(jobs: jobs, secrets: secrets, appName: Instance.current.appName)
-        let what = jobs.count == 1 ? jobs[0].id : "\(jobs.count) jobs"
-        copy(text, said: "Copied a prompt for \(what): paste it into Claude Code or Codex on the other Mac")
+        copy(text, said: SharePrompt.copiedMessage(jobIDs: jobs.map(\.id), unsavedChanges: unsavedChanges))
     }
 
     var menuContext: AppMenu.Context {

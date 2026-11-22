@@ -213,8 +213,8 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         item.representedObject = entry.action
         if let symbol = entry.symbol {
             item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
-        } else if case let .runNow(jobID) = entry.action, let job = model.job(jobID) {
-            // An entry of Run a Job Now.
+        } else if let jobID = entry.action.jobInMenu, let job = model.job(jobID) {
+            // An entry of Run a Job Now or Copy Job as Prompt.
             item.image = JobGlyph.menuImage(job.job)
         }
         if entry.checked { item.state = .on }
@@ -273,7 +273,13 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
                 if !fromWindow, model.messageFailed, let why = model.message { alert(.failed("\(jobID) did not start", why)) }
             }
         case .copyMCPCommand: model.copy(model.mcpCommand)
-        case .copySharePrompt: model.copySharePrompt()
+        case let .copySharePrompt(jobID):
+            if let jobID {
+                guard let job = model.job(jobID) else { return }
+                model.copySharePrompt([job])
+            } else {
+                model.copySharePrompt()
+            }
         case .openLogsFolder: model.openLogsFolder()
         case .openHelp: model.openHelp()
         case .installCLI: report(model.installCLI(), fromWindow: fromWindow)

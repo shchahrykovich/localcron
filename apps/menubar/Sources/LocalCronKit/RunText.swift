@@ -167,6 +167,13 @@ public enum JobGroups {
         jobs.sorted(by: order)
     }
 
+    /// The jobs whose id contains `query`, in any case; an empty query
+    /// keeps every job. Order stays.
+    public static func filter(_ jobs: [JobView], query: String) -> [JobView] {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        return q.isEmpty ? jobs : jobs.filter { $0.id.lowercased().contains(q) }
+    }
+
     /// `/Users/me/Projects/shop` → `~/Projects/shop`.
     public static func tilde(_ path: String, home: String = NSHomeDirectory()) -> String {
         if path == home { return "~" }

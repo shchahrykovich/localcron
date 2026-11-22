@@ -76,8 +76,9 @@ final class AppModel {
     var runFilter: RunFilter = .all
     /// The Runs page shows only jobs whose id contains this.
     var runJobFilter = ""
-    /// The next times of each job that is on, for the Today strip and the
-    /// calendars, from each job's next run on: a time a run early took is
+    /// The Jobs page shows only jobs whose id contains this.
+    var jobFilter = ""
+    /// The next times of each job that is on, for the calendars, from each job's next run on: a time a run early took is
     /// left out. The schedule times are read at most once a minute.
     var planned: [String: [Date]] {
         let next = jobs.reduce(into: [String: Date]()) { out, job in

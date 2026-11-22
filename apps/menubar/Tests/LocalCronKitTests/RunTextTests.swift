@@ -93,6 +93,17 @@ final class RunTextTests: XCTestCase {
         XCTAssertEqual(JobGroups.tilde("/tmp/x", home: "/Users/me"), "/tmp/x")
     }
 
+    func testTheJobFilterKeepsMatchingJobsInOrder() throws {
+        func job(_ id: String) throws -> JobView {
+            let json = #"{"id":"\#(id)","schedule":"@daily","kind":"shell","command":"true","dir":"/tmp","enabled":true,"schedule_text":"Every day"}"#
+            return try Api.decoder.decode(JobView.self, from: Data(json.utf8))
+        }
+        let jobs = [try job("wiki-drafts"), try job("apple-books-charts"), try job("apple-books-compact")]
+        XCTAssertEqual(JobGroups.filter(jobs, query: "").map(\.id), ["wiki-drafts", "apple-books-charts", "apple-books-compact"])
+        XCTAssertEqual(JobGroups.filter(jobs, query: " BOOKS ").map(\.id), ["apple-books-charts", "apple-books-compact"])
+        XCTAssertEqual(JobGroups.filter(jobs, query: "deps").map(\.id), [])
+    }
+
     func testTextForTimesAndSizes() {
         let cal = utcCalendar
         XCTAssertEqual(Formatting.soon(ApiDate.parse("2026-10-30T12:00:00Z")!, now: testNow, calendar: cal), "12:00, in 1 h 20 min")
@@ -138,17 +149,6 @@ final class RunTextTests: XCTestCase {
 }
 
 final class CalendarLayoutTests: XCTestCase {
-    func testTheStripShowsTwelveHoursWithNowAThirdIn() {
-        let strip = DayStrip(now: testNow, calendar: utcCalendar)
-        XCTAssertEqual(strip.start, ApiDate.parse("2026-10-30T06:00:00Z"))
-        XCTAssertEqual(strip.end, ApiDate.parse("2026-10-30T18:00:00Z"))
-        XCTAssertEqual(strip.fraction(testNow), 280.0 / 720, accuracy: 0.0001)
-        XCTAssertEqual(strip.labels.map { Formatting.clock($0, calendar: utcCalendar) }, ["06:00", "09:00", "12:00", "15:00", "18:00"])
-        let marks = [TimeMark(id: "a", jobID: "a", mark: .planned, start: ApiDate.parse("2026-10-30T19:00:00Z")!),
-                     TimeMark(id: "b", jobID: "b", mark: .succeeded, start: ApiDate.parse("2026-10-30T08:00:00Z")!)]
-        XCTAssertEqual(strip.marks(marks).map(\.id), ["b"], "19:00 is past the end")
-    }
-
     /// A run early takes the place of the next time: the daemon's next run
     /// moves to the day after, but the schedule still has today's time.
     func testATimeThatAnEarlyRunTookIsNotPlanned() {

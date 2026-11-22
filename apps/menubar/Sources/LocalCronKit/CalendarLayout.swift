@@ -81,32 +81,6 @@ public enum PlannedTimes {
     }
 }
 
-public struct DayStrip: Equatable, Sendable {
-    public var start: Date
-    public var end: Date
-
-    /// From the hour 4 hours before now, for 12 hours.
-    public init(now: Date, calendar: Calendar = .current) {
-        let hour = calendar.dateInterval(of: .hour, for: now)?.start ?? now
-        start = hour.addingTimeInterval(-4 * 3600)
-        end = start.addingTimeInterval(12 * 3600)
-    }
-
-    public func fraction(_ date: Date) -> Double {
-        date.timeIntervalSince(start) / end.timeIntervalSince(start)
-    }
-
-    public func contains(_ date: Date) -> Bool { date >= start && date <= end }
-
-    /// The labels under the strip: every 3 hours, start and end included.
-    public var labels: [Date] { (0...4).map { start.addingTimeInterval(Double($0) * 3 * 3600) } }
-
-    /// The marks in the strip, oldest first.
-    public func marks(_ marks: [TimeMark]) -> [TimeMark] {
-        marks.filter { contains($0.start) }.sorted { $0.start < $1.start }
-    }
-}
-
 /// A day in the month grid.
 public struct MonthDay: Equatable, Sendable, Identifiable {
     public var date: Date

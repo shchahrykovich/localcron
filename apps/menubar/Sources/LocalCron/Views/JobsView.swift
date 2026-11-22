@@ -1,251 +1,45 @@
 import LocalCronKit
 import SwiftUI
 
-/// The Jobs page: today's runs on a strip, jobs that wait for the user's
-/// OK, then all jobs in one card, the next to run first.
+/// The Jobs page: a filter by job id, jobs that wait for the user's OK,
+/// then all jobs in one card, the next to run first.
 struct JobsView: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
+        @Bindable var model = model
         if model.jobs.isEmpty {
             EmptyJobsView()
         } else {
-            ScrollView {
-                VStack(spacing: 12) {
-                    TodayCard().zIndex(1) // its tooltip goes over the jobs below
-                    ForEach(model.jobs.filter { $0.secretsAllowed == false }) { WaitingBanner(job: $0) }
-                    if !model.failedJobs.isEmpty { FailedBanner(jobs: model.failedJobs) }
-                    Card {
-                        ForEach(Array(JobGroups.ordered(model.jobs).enumerated()), id: \.element.id) { i, job in
-                            if i > 0 { RowDivider() }
-                            JobRow(job: job)
+            let jobs = JobGroups.ordered(JobGroups.filter(model.jobs, query: model.jobFilter))
+            VStack(spacing: 0) {
+                FilterField(prompt: "Filter by job", text: $model.jobFilter)
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 10)
+                ScrollView {
+                    VStack(spacing: 12) {
+                        ForEach(model.jobs.filter { $0.secretsAllowed == false }) { WaitingBanner(job: $0) }
+                        if !model.failedJobs.isEmpty { FailedBanner(jobs: model.failedJobs) }
+                        if jobs.isEmpty {
+                            VStack(spacing: 6) {
+                                Text("No job matches").font(.system(size: 13, weight: .medium))
+                                Text("Clear the job filter.").font(.system(size: 12)).foregroundStyle(.secondary)
+                            }
+                            .padding(.top, 40)
+                        } else {
+                            Card {
+                                ForEach(Array(jobs.enumerated()), id: \.element.id) { i, job in
+                                    if i > 0 { RowDivider() }
+                                    JobRow(job: job)
+                                }
+                            }
                         }
                     }
-                }
-                .padding(.horizontal, 14)
-                .padding(.bottom, 12)
-            }
-        }
-    }
-}
-
-/// Twelve hours of today: what ran, what works now, what comes.
-struct TodayCard: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        let strip = DayStrip(now: model.now)
-        let marks = strip.marks(model.timeMarks(from: model.runs))
-        Card {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("Today").font(.system(size: 12, weight: .semibold))
-                    Spacer()
-                    nextText.font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
-                }
-                GeometryReader { geo in
-                    stripView(strip, marks: marks, width: geo.size.width)
-                }
-                .frame(height: 22)
-                GeometryReader { geo in
-                    labels(strip, width: geo.size.width)
-                }
-                .frame(height: 13)
-            }
-            .padding(.horizontal, 12)
-            .padding(.top, 9)
-            .padding(.bottom, 8)
-        }
-        // Outside the card, which clips what is in it.
-        .overlayPreferenceValue(TipAnchor.self) { anchor in
-            GeometryReader { geo in
-                if let anchor, let mark = hovered {
-                    let dot = geo[anchor]
-                    StripTip(mark: mark, open: { open(mark) }, hovering: { overTip = $0; $0 ? keepTip() : hideTip() })
-                        .frame(width: StripTip.width)
-                        .position(x: min(max(dot.midX, StripTip.width / 2), geo.size.width - StripTip.width / 2),
-                                  y: dot.maxY + 6 + StripTip.height / 2)
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 12)
                 }
             }
         }
-    }
-
-    // MARK: The tooltip of a mark
-
-    @State private var hovered: TimeMark?
-    @State private var overTip = false
-    @State private var hideTask: Task<Void, Never>?
-
-    private func hover(_ mark: TimeMark, _ on: Bool) {
-        if on {
-            keepTip()
-            hovered = mark
-        } else if hovered?.id == mark.id {
-            // Leaving a dot after the mouse entered the next one keeps the next one's tooltip.
-            hideTip()
-        }
-    }
-
-    private func keepTip() { hideTask?.cancel() }
-
-    /// A moment later, so the mouse can move from the dot onto the tooltip.
-    private func hideTip() {
-        hideTask?.cancel()
-        hideTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(200))
-            if !Task.isCancelled && !overTip { hovered = nil }
-        }
-    }
-
-    /// A run opens its log; a planned time opens the job.
-    private func open(_ mark: TimeMark) {
-        hovered = nil
-        if let runID = mark.runID {
-            model.showLog(runID: runID)
-        } else if let job = model.job(mark.jobID) {
-            model.edit(job)
-        }
-    }
-
-    private var nextText: Text {
-        if model.paused { return Text("Paused: scheduled runs do not start") }
-        guard let next = model.status?.next, let at = ApiDate.parse(next.at) else { return Text("No run is planned") }
-        let soon = Formatting.soon(at, now: model.now)
-        let when = soon.contains(", in") ? "at \(soon)" : soon
-        return Text("Next: ") + Text(next.jobId).foregroundColor(.primary).fontWeight(.medium) + Text(" \(when)")
-    }
-
-    private func stripView(_ strip: DayStrip, marks: [TimeMark], width: CGFloat) -> some View {
-        let x = { (d: Date) in CGFloat(strip.fraction(d)) * width }
-        let nowX = x(model.now)
-        return ZStack(alignment: .topLeading) {
-            // The past part of the strip.
-            RoundedRectangle(cornerRadius: 4).fill(Theme.ground).frame(width: max(0, nowX), height: 22)
-            Rectangle().fill(Theme.neutralLine).frame(height: 1).offset(y: 11)
-            ForEach(strip.labels, id: \.self) { label in
-                Rectangle().fill(Theme.neutralLine).frame(width: 1, height: 7).offset(x: min(x(label), width - 1), y: 8)
-            }
-            ForEach(marks) { mark in
-                dot(mark)
-                    .frame(width: 16, height: 22)
-                    .contentShape(Rectangle())
-                    .onHover { hover(mark, $0) }
-                    .onTapGesture { open(mark) }
-                    .anchorPreference(key: TipAnchor.self, value: .bounds) { hovered?.id == mark.id ? $0 : nil }
-                    .accessibilityElement()
-                    .accessibilityLabel(StripTip.line(mark, now: model.now))
-                    .accessibilityAddTraits(.isButton)
-                    .position(x: x(mark.start), y: 11)
-            }
-            RoundedRectangle(cornerRadius: 1).fill(Theme.accentFill).frame(width: 2, height: 22).offset(x: nowX - 1)
-        }
-        .frame(width: width, height: 22, alignment: .topLeading)
-    }
-
-    @ViewBuilder private func dot(_ mark: TimeMark) -> some View {
-        switch mark.mark {
-        case .planned:
-            Circle().strokeBorder(Theme.accentFill, lineWidth: 1.5).background(Circle().fill(Theme.card)).frame(width: 8, height: 8)
-        case .working:
-            Circle().fill(Theme.accentFill).frame(width: 10, height: 10)
-                .overlay(Circle().strokeBorder(Theme.accentRing, lineWidth: 3).padding(-3))
-        default:
-            Circle().fill(mark.mark.solid).frame(width: 8, height: 8)
-        }
-    }
-
-    private func labels(_ strip: DayStrip, width: CGFloat) -> some View {
-        let nowX = CGFloat(strip.fraction(model.now)) * width
-        return ZStack(alignment: .topLeading) {
-            ForEach(Array(strip.labels.enumerated()), id: \.offset) { i, label in
-                let lx = CGFloat(strip.fraction(label)) * width
-                // A label under the "now" label is left out.
-                if abs(lx - nowX) > 34 {
-                    Text(Formatting.clock(label))
-                        .frame(width: 40, alignment: i == 0 ? .leading : i == strip.labels.count - 1 ? .trailing : .center)
-                        .offset(x: i == 0 ? 0 : i == strip.labels.count - 1 ? width - 40 : lx - 20)
-                }
-            }
-            Text(Formatting.clock(model.now)).foregroundStyle(Theme.accent).fontWeight(.semibold)
-                .frame(width: 40).offset(x: min(max(0, nowX - 20), width - 40))
-        }
-        .font(.system(size: 10.5).monospacedDigit())
-        .foregroundStyle(.secondary)
-        .frame(width: width, alignment: .topLeading)
-    }
-}
-
-/// Where the hovered mark of the Today strip is.
-private struct TipAnchor: PreferenceKey {
-    static let defaultValue: Anchor<CGRect>? = nil
-    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
-        value = value ?? nextValue()
-    }
-}
-
-/// The tooltip of a mark on the Today strip: the job's icon, what happened
-/// or comes, and what a click opens.
-private struct StripTip: View {
-    @Environment(AppModel.self) private var model
-    let mark: TimeMark
-    let open: () -> Void
-    let hovering: (Bool) -> Void
-    @State private var over = false
-
-    static let width: CGFloat = 250
-    static let height: CGFloat = 52
-
-    /// "Succeeded at 17:29, took 6 min 2 s", "Planned at 21:00, in 1 h 55 min".
-    static func line(_ mark: TimeMark, now: Date) -> String {
-        let at = Formatting.clock(mark.start)
-        switch mark.mark {
-        case .planned:
-            return "Planned at \(at), \(Formatting.left(mark.start.timeIntervalSince(now)))"
-        case .working:
-            return "Running since \(at), \(Formatting.duration(now.timeIntervalSince(mark.start)))"
-        default:
-            let took = mark.end.map { ", took \(Formatting.duration($0.timeIntervalSince(mark.start)))" } ?? ""
-            return "\(mark.mark.title) at \(at)\(took)"
-        }
-    }
-
-    var body: some View {
-        let job = model.job(mark.jobID)
-        Button(action: open) {
-            HStack(spacing: 9) {
-                if let job {
-                    JobTile(job: job, showDot: false)
-                } else {
-                    Image(systemName: "clock").frame(width: 24, height: 24).foregroundStyle(.secondary)
-                        .background(Theme.neutralSoft, in: RoundedRectangle(cornerRadius: 6))
-                }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(mark.jobID).font(.system(size: 12, weight: .semibold)).lineLimit(1).truncationMode(.middle)
-                    HStack(spacing: 5) {
-                        Circle().fill(mark.mark.solid).frame(width: 6, height: 6)
-                        Text(Self.line(mark, now: model.now)).lineLimit(1)
-                    }
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 4)
-                if mark.runID != nil || job != nil {
-                    VStack(spacing: 1) {
-                        Image(systemName: mark.runID != nil ? "doc.text" : "pencil").font(.system(size: 11, weight: .medium))
-                        Text(mark.runID != nil ? "Log" : "Job").font(.system(size: 9.5, weight: .medium))
-                    }
-                    .foregroundStyle(over ? Theme.accent : .secondary)
-                }
-            }
-            .padding(.horizontal, 10)
-            .frame(height: Self.height)
-            .background(over ? Theme.rowHover : Theme.card, in: RoundedRectangle(cornerRadius: 9))
-            .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Theme.line, lineWidth: 0.5))
-            .shadow(color: .black.opacity(0.14), radius: 8, y: 3)
-            .contentShape(RoundedRectangle(cornerRadius: 9))
-        }
-        .buttonStyle(.plain)
-        .onHover { over = $0; hovering($0) }
-        .accessibilityLabel(mark.runID != nil ? "Open the log of this run" : "Open the job")
     }
 }
 

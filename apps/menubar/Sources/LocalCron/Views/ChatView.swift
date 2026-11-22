@@ -36,7 +36,8 @@ private struct ChannelList: View {
             Rectangle().fill(Theme.line).frame(height: 0.5)
             ScrollView {
                 VStack(alignment: .leading, spacing: 1) {
-                    row(nil, title: "All jobs", unread: channels.reduce(0) { $0 + $1.unread })
+                    row(nil, title: "All jobs", unread: channels.reduce(0) { $0 + $1.unread },
+                        workingCount: channels.filter { $0.working != nil }.count)
                     Text("Jobs").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
                         .padding(.horizontal, 10)
                         .padding(.top, 14)
@@ -46,7 +47,7 @@ private struct ChannelList: View {
                             .padding(.horizontal, 10)
                     }
                     ForEach(channels) { channel in
-                        row(channel.jobID, title: channel.jobID, unread: channel.unread)
+                        row(channel.jobID, title: channel.jobID, unread: channel.unread, working: channel.working)
                     }
                 }
                 .padding(8)
@@ -55,12 +56,18 @@ private struct ChannelList: View {
         .background(Theme.ground)
     }
 
-    private func row(_ jobID: String?, title: String, unread: Int) -> some View {
+    /// A job whose run works now looks as that run does on the Logs page:
+    /// the status icon instead of the job's, in a light accent row.
+    private func row(_ jobID: String?, title: String, unread: Int, working: Run? = nil, workingCount: Int = 0) -> some View {
         let selected = model.chatJob == jobID
+        let workingText = working.map { RunText.line($0, now: model.now).text }
         return Button { model.chatJob = jobID } label: {
             HStack(spacing: 8) {
                 Group {
-                    if let jobID, let job = model.job(jobID) {
+                    if let working {
+                        Image(systemName: working.status.symbol).font(.system(size: 13))
+                            .foregroundStyle(selected ? Color.white : working.status.color)
+                    } else if let jobID, let job = model.job(jobID) {
                         JobGlyph(job: job.job, size: 13)
                     } else {
                         Image(systemName: jobID == nil ? "tray.full" : "number").font(.system(size: 12, weight: .medium))
@@ -73,6 +80,16 @@ private struct ChannelList: View {
                     .foregroundStyle(selected ? Color.white : unread > 0 ? .primary : .secondary)
                     .lineLimit(1).truncationMode(.middle)
                 Spacer(minLength: 4)
+                if workingCount > 0 {
+                    HStack(spacing: 3) {
+                        Image(systemName: RunStatus.running.symbol).font(.system(size: 10))
+                        Text("\(workingCount)").font(.system(size: 10.5, weight: .bold).monospacedDigit())
+                    }
+                    .foregroundStyle(selected ? Color.white : Theme.accentSoftText)
+                    .padding(.horizontal, 6).padding(.vertical, 1)
+                    .background(selected ? Color.white.opacity(0.3) : Theme.accentSoft, in: Capsule())
+                    .help(workingCount == 1 ? "1 job runs now" : "\(workingCount) jobs run now")
+                }
                 if unread > 0 {
                     Text("\(unread)")
                         .font(.system(size: 10.5, weight: .bold)).foregroundStyle(.white)
@@ -82,12 +99,13 @@ private struct ChannelList: View {
             }
             .padding(.horizontal, 10)
             .frame(height: 28)
-            .background(selected ? Theme.accentFill : .clear, in: RoundedRectangle(cornerRadius: 6))
+            .background(selected ? Theme.accentFill : working != nil ? Theme.accentSoft : .clear,
+                        in: RoundedRectangle(cornerRadius: 6))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(jobID == nil ? "Every run and message, from every job" : title)
-        .accessibilityLabel(unread > 0 ? "\(title), \(unread) new" : title)
+        .help(jobID == nil ? "Every run and message, from every job" : workingText.map { "\(title): \($0)" } ?? title)
+        .accessibilityLabel([title, workingText, unread > 0 ? "\(unread) new" : nil].compactMap { $0 }.joined(separator: ", "))
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
@@ -320,7 +338,8 @@ private struct RunLine: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
-        .background(run.shownStatus.isFailure || line.tone == .danger ? Theme.dangerRow : Theme.field.opacity(0.5),
+        .background(run.shownStatus.isFailure || line.tone == .danger ? Theme.dangerRow
+                    : run.status.isFinished ? Theme.field.opacity(0.5) : Theme.accentSoft,
                     in: RoundedRectangle(cornerRadius: 8))
         .frame(maxWidth: 640, alignment: .leading)
         .contextMenu {

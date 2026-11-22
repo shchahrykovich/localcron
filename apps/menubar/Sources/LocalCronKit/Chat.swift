@@ -12,6 +12,8 @@ public enum Chat {
         public var unread: Int
         /// The time of its newest run or message; nil when it has neither.
         public var last: Date?
+        /// Its run that works or waits for a free slot now.
+        public var working: Run?
         public var id: String { jobID }
     }
 
@@ -41,24 +43,28 @@ public enum Chat {
         public var id: Date { day }
     }
 
-    /// One channel per job: those with the newest run or message first,
-    /// then the jobs with neither, by name.
+    /// One channel per job: those that run now first, then those with the
+    /// newest run or message, then the jobs with neither, by name.
     public static func channels(_ messages: [Message], runs: [Run] = [], jobIDs: [String] = []) -> [Channel] {
         var byJob: [String: Channel] = [:]
         func touch(_ jobID: String, _ at: Date?) {
-            var channel = byJob[jobID] ?? Channel(jobID: jobID, unread: 0, last: nil)
+            var channel = byJob[jobID] ?? Channel(jobID: jobID, unread: 0, last: nil, working: nil)
             if let at { channel.last = max(channel.last ?? at, at) }
             byJob[jobID] = channel
         }
         for jobID in jobIDs { touch(jobID, nil) }
-        for run in runs { touch(run.jobId, run.shownAt) }
+        for run in runs {
+            touch(run.jobId, run.shownAt)
+            if !run.status.isFinished, byJob[run.jobId]?.working == nil { byJob[run.jobId]?.working = run }
+        }
         for message in messages {
             guard let at = ApiDate.parse(message.at) else { continue }
             touch(message.jobId, at)
             if !message.read { byJob[message.jobId]?.unread += 1 }
         }
         return byJob.values.sorted { a, b in
-            switch (a.last, b.last) {
+            if (a.working == nil) != (b.working == nil) { return a.working != nil }
+            return switch (a.last, b.last) {
             case let (x?, y?) where x != y: x > y
             case (_?, nil): true
             case (nil, _?): false

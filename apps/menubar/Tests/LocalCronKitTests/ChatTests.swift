@@ -37,6 +37,18 @@ final class ChatTests: XCTestCase {
         XCTAssertNil(channels[3].last)
     }
 
+    /// A job that runs now goes first, even when another job wrote later,
+    /// and its channel holds the run, so the list can show it.
+    func testAChannelThatRunsNowGoesFirstAndHoldsItsRun() {
+        let runs = [makeRun("deps.4", .succeeded, start: "2026-11-22T20:50:00Z", end: "2026-11-22T20:51:00Z", exit: 0),
+                    makeRun("wiki.10", .running, start: "2026-11-22T20:30:00Z"),
+                    makeRun("notes.2", .queued, start: nil),
+                    makeRun("deps.3", .succeeded, start: "2026-11-22T20:00:00Z", end: "2026-11-22T20:00:09Z", exit: 0)]
+        let channels = Chat.channels(messages, runs: runs, jobIDs: ["wiki", "deps", "notes", "idle"])
+        XCTAssertEqual(channels.map(\.jobID), ["wiki", "notes", "deps", "idle"])
+        XCTAssertEqual(channels.map { $0.working?.id }, ["wiki.10", "notes.2", nil, nil])
+    }
+
     func testAJobThatIsGoneStillHasAChannelWhileItsMessagesAreKept() {
         let channels = Chat.channels([message(9, "old.1", "2026-11-20T10:00:00Z")], runs: [], jobIDs: ["wiki"])
         XCTAssertEqual(channels.map(\.jobID), ["old", "wiki"])

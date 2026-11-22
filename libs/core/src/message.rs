@@ -1,6 +1,7 @@
 //! Messages from runs to the user. A job sends one only when the user must
 //! know or do something; a run that just works sends none. The menu bar app
-//! shows them in the Messages tab and marks its icon while one is unread.
+//! shows them on the Chat page, as Markdown, and marks its icon while one
+//! is unread.
 
 use chrono::{DateTime, FixedOffset};
 use serde::{Deserialize, Serialize};

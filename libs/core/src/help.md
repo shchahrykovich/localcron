@@ -171,7 +171,9 @@ A job should just run. When something needs you, a run can tell you:
   **Chat** page of the app window (click the menu bar icon), one channel
   per job, under the run that sent it. The menu bar icon gets a blue dot until you read it.
   A run sends at most 3, of at most 2000 characters each. Use it only for
-  what you must know or do, never for progress.
+  what you must know or do, never for progress. The text is Markdown:
+  headings, bold and italic, lists, quotes, tables, code and links. A bare
+  URL is a link, and a line break stays a line break.
 - **A status**: `{{CLI}} report error --note "3 files were not copied"`, or
   the `set_run_status` tool. The exit code only says that the program ended;
   the reported status says whether the work was done. A reported error

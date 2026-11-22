@@ -360,11 +360,8 @@ private struct MessageLine: View {
     @State private var hovering = false
 
     var body: some View {
-        Text(Chat.rich(message.text))
-            .font(.system(size: 13))
-            .textSelection(.enabled)
+        MessageBody(message.text, colors: .init(link: NSColor(Theme.accent), box: Theme.field, line: Theme.line))
             .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 3)
             .padding(.horizontal, 6)
             .background(hovering ? Theme.rowHover : .clear, in: RoundedRectangle(cornerRadius: 6))

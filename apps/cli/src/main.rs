@@ -112,6 +112,7 @@ enum Command {
     },
     /// From inside a run: send the user a message, shown in the menu bar
     /// app. Only for what the user must know or do; a run sends at most 3.
+    /// The text is Markdown: headings, lists, tables, code and links.
     Message {
         text: String,
         /// The run. Default: $LOCALCRON_RUN_ID, which every run has.

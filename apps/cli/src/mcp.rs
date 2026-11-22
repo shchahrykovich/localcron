@@ -196,7 +196,8 @@ pub struct NoArgs {}
 #[serde(deny_unknown_fields)]
 pub struct SendMessageArgs {
     /// What the user must know or do, in plain words, at most 2000 characters: "The backup disk is 95% full; the
-    /// next backup will fail. Delete old snapshots in /Volumes/Backup." Details go in the run's output.
+    /// next backup will fail. Delete old snapshots in /Volumes/Backup." Markdown: `**bold**`, `- lists`, `| tables |`,
+    /// `[links](https://…)`, `` `code` ``; a bare URL is a link. Details go in the run's output.
     pub text: String,
     /// The run. Default: $LOCALCRON_RUN_ID of this server. Give it when the tool says it is missing: read it with
     /// `echo $LOCALCRON_RUN_ID` in the run's shell.
@@ -346,7 +347,8 @@ sets or returns a value.")]
     #[tool(description = "Inside a scheduled run only: send the user a message, shown in the menu bar app, whose icon \
 gets a dot until the user reads it. Only for what the user must know or do: a problem they must fix, a decision, \
 something that will break. A run that went as planned sends none; a run sends at most 3. Not for progress or a \
-summary of normal work: that goes in the run's output.")]
+summary of normal work: that goes in the run's output. The text is Markdown: headings, lists, tables, code, links; a \
+line break stays a line break.")]
     async fn send_message(&self, Parameters(args): Parameters<SendMessageArgs>) -> Result<CallToolResult, ErrorData> {
         Ok(match current_run_id(args.run_id, env_var) {
             Ok(run_id) => self.call("send_message", SendMessageParams { run_id, text: args.text }).await,

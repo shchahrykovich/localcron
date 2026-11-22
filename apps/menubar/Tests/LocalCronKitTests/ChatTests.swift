@@ -91,11 +91,4 @@ final class ChatTests: XCTestCase {
         XCTAssertTrue(Chat.channels(bad).isEmpty)
         XCTAssertTrue(Chat.timeline(bad, jobID: nil).isEmpty)
     }
-
-    func testMarkdownLinksAndBoldAreKeptAndLineBreaksStay() {
-        let rich = Chat.rich("PR **ready**: [open](https://github.com/a/b/pull/1)\nnext line")
-        XCTAssertEqual(String(rich.characters), "PR ready: open\nnext line")
-        XCTAssertTrue(rich.runs.contains { $0.link == URL(string: "https://github.com/a/b/pull/1") })
-        XCTAssertEqual(String(Chat.rich("a [b").characters), "a [b")
-    }
 }

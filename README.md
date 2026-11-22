@@ -123,7 +123,8 @@ A job should just run. When something needs you, a run can say so:
 - `localcron message "The backup disk is 95% full"` (or the MCP tool
   `send_message`): shown on the **Chat** page of the app window (click the
   menu bar icon), one channel per job, under the run that sent it. The menu bar icon gets a blue dot
-  until you read it. A run sends at most 3 messages.
+  until you read it. A run sends at most 3 messages. The text is Markdown:
+  headings, lists, tables, code and links.
 - `localcron report error --note "3 files were not copied"` (or
   `set_run_status`): how the work went, apart from the exit code. A reported
   error shows as a failed run, also when the program ended with code 0.

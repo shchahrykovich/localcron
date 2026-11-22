@@ -76,7 +76,10 @@ its id in `LOCALCRON_RUN_ID`; the tools below and the CLI read it from there.
 - `send_message` (`{{CLI}} message "TEXT"` in a shell): a message the user
   sees in the menu bar app, whose icon gets a dot until it is read. Only for
   what the user must know or do: a problem to fix, a decision, something that
-  will break. Never for progress or a normal result. At most 3 per run.
+  will break. Never for progress or a normal result. At most 3 per run,
+  2000 characters each. The text is Markdown: `**bold**`, `- lists`,
+  `| tables |`, `` `code` ``, `[links](https://…)`; a bare URL is a link, and
+  a line break stays a line break.
 - `set_run_status` (`{{CLI}} report error --note "…"`): `error` when the work
   was not done or went wrong, even if nothing crashed; `success` when it was
   done. The app shows a reported error as a failed run. Call it once, at the

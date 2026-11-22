@@ -96,7 +96,12 @@ LocalCron.app (Swift) ───────────────────�
   `unread_messages`; the app draws a dot on its icon. The Chat page of the
   app window has one channel per job: each run is a post with its status
   and a View Log button, and the messages it sent under it (`ChatView`,
-  logic in `LocalCronKit/Chat.swift`); a channel's messages become read only while
+  logic in `LocalCronKit/Chat.swift`). A message's text is Markdown
+  (`LocalCronKit/MessageMarkdown.swift`): Apple's parser reads it, `blocks`
+  groups its text by block, and `MessageBody` draws each block; text goes in
+  `LinkText`, an `NSTextView`, because SwiftUI's `Text` on macOS 14 cannot
+  show the pointing hand over a link. A soft line break stays a line break.
+  A channel's messages become read only while
   that window is the key window. A
   reported error counts as a failed run in the app (`Run.failed`). Codex
   does not pass the run's environment to MCP servers, so the tools take

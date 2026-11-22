@@ -112,11 +112,4 @@ public enum Chat {
         }
         return days
     }
-
-    /// A message's text with Markdown links, bold, italic and code shown as
-    /// such; line breaks stay. Plain text when it is not valid Markdown.
-    public static func rich(_ text: String) -> AttributedString {
-        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
-    }
 }

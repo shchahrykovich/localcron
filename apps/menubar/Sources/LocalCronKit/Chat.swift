@@ -15,7 +15,23 @@ public enum Chat {
         public var last: Date?
         /// Its run that works or waits for a free slot now.
         public var working: Run?
+        /// How many runs and messages the daemon keeps for it.
+        public var runs = 0
+        public var messages = 0
+        /// When its newest run started.
+        public var lastRun: Date?
         public var id: String { jobID }
+    }
+
+    /// How the channel list is sorted.
+    public enum Order: String, CaseIterable, Sendable {
+        case activity = "Recent Activity"
+        case lastRun = "Last Run"
+        case runs = "Most Runs"
+        case messages = "Most Messages"
+        case name = "Name"
+
+        public static let defaultsKey = "chatOrder"
     }
 
     /// A post: one run, with its status line and the messages it sent,
@@ -76,9 +92,12 @@ public enum Chat {
         public var id: Date { day }
     }
 
-    /// One channel per job: those that run now first, then those with the
-    /// newest run or message, then the jobs with neither, by name.
-    public static func channels(_ messages: [Message], runs: [Run] = [], jobIDs: [String] = []) -> [Channel] {
+    /// One channel per job. By recent activity: those that run now first,
+    /// then those with the newest run or message, then the jobs with
+    /// neither, by name. The other orders put the most first, then go by
+    /// name.
+    public static func channels(_ messages: [Message], runs: [Run] = [], jobIDs: [String] = [],
+                                order: Order = .activity) -> [Channel] {
         var byJob: [String: Channel] = [:]
         func touch(_ jobID: String, _ at: Date?) {
             var channel = byJob[jobID] ?? Channel(jobID: jobID, unread: 0, last: nil, working: nil)
@@ -88,22 +107,51 @@ public enum Chat {
         for jobID in jobIDs { touch(jobID, nil) }
         for run in runs {
             touch(run.jobId, run.shownAt)
+            byJob[run.jobId]?.runs += 1
+            if let at = run.shownAt, let seen = byJob[run.jobId] { byJob[run.jobId]?.lastRun = max(seen.lastRun ?? at, at) }
             if !run.status.isFinished, byJob[run.jobId]?.working == nil { byJob[run.jobId]?.working = run }
         }
         for message in messages {
             guard let at = ApiDate.parse(message.at) else { continue }
             touch(message.jobId, at)
+            byJob[message.jobId]?.messages += 1
             if !message.read { byJob[message.jobId]?.unread += 1 }
         }
-        return byJob.values.sorted { a, b in
-            if (a.working == nil) != (b.working == nil) { return a.working != nil }
-            return switch (a.last, b.last) {
+        func newer(_ x: Date?, _ y: Date?) -> Bool? {
+            switch (x, y) {
             case let (x?, y?) where x != y: x > y
             case (_?, nil): true
             case (nil, _?): false
-            default: a.jobID < b.jobID
+            default: nil
             }
         }
+        return byJob.values.sorted { a, b in
+            switch order {
+            case .activity:
+                if (a.working == nil) != (b.working == nil) { return a.working != nil }
+                if let first = newer(a.last, b.last) { return first }
+            case .lastRun:
+                if let first = newer(a.lastRun, b.lastRun) { return first }
+            case .runs:
+                if a.runs != b.runs { return a.runs > b.runs }
+            case .messages:
+                if a.messages != b.messages { return a.messages > b.messages }
+            case .name:
+                break
+            }
+            return a.jobID < b.jobID
+        }
+    }
+
+    /// A time ago in a few letters, for a narrow column: "now", "5m",
+    /// "3h", "2d", "5w".
+    public static func shortAge(_ date: Date, now: Date = Date()) -> String {
+        let s = max(0, now.timeIntervalSince(date))
+        if s < 60 { return "now" }
+        if s < 3600 { return "\(Int(s / 60))m" }
+        if s < 86400 { return "\(Int(s / 3600))h" }
+        if s < 14 * 86400 { return "\(Int(s / 86400))d" }
+        return "\(Int(s / (7 * 86400)))w"
     }
 
     /// The messages of a channel (all jobs with nil), oldest first.

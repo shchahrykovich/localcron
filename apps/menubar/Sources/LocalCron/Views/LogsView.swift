@@ -26,6 +26,10 @@ struct AppWindowView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .overlay {
+            if model.paletteShown { SearchPalette() }
+        }
+        .onAppear { PaletteKeys.install(model) }
         .task {
             while !Task.isCancelled {
                 await model.loadHistory()

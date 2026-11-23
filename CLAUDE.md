@@ -113,9 +113,14 @@ LocalCron.app (Swift) ───────────────────�
   idle), saves each conversation with its session id in
   `manager-chats.json` in the data folder and goes on with `--resume`. The
   session works in the job's folder, gets the bundled CLI as its MCP server
-  (`--mcp-config`), and may use only the read-only LocalCron tools without
-  asking (`Manager.readOnlyTools`, plus tools the user allowed for the
-  conversation); every other tool shows a card with Allow / Always / Reject.
+  (`--mcp-config`), and uses every LocalCron tool without asking
+  (`Manager.allowedTools`: `mcp__<server>`, plus tools the user allowed for
+  the conversation); every other tool shows a card with Allow / Always /
+  Reject.
+  ⌘F on any page opens the search palette (`Views/SearchPalette.swift`,
+  logic in `LocalCronKit/QuickSearch.swift`); `PaletteKeys` reads its keys
+  with a local event monitor, before any text field. The channel list sorts
+  by `Chat.Order`, saved in UserDefaults.
   `Chat.timeline` puts the conversation between the run posts by time and
   joins posts of one author within 10 minutes, as Slack does.
   A channel's messages become read only while

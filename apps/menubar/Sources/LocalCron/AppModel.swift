@@ -113,6 +113,19 @@ final class AppModel {
     var chatJob: String? {
         didSet { if chatJob != oldValue { chatShown() } }
     }
+    /// How the Chat page sorts its jobs.
+    var chatOrder = Chat.Order(rawValue: UserDefaults.standard.string(forKey: Chat.Order.defaultsKey) ?? "") ?? .activity {
+        didSet { UserDefaults.standard.set(chatOrder.rawValue, forKey: Chat.Order.defaultsKey) }
+    }
+    /// The search palette (⌘F on any page): open, what it holds, and the
+    /// chosen result.
+    var paletteShown = false {
+        didSet { if paletteShown, !oldValue { paletteQuery = ""; paletteIndex = 0 } }
+    }
+    var paletteQuery = "" {
+        didSet { if paletteQuery != oldValue { paletteIndex = 0 } }
+    }
+    var paletteIndex = 0
     /// The oldest message that was unread when the channel came into view:
     /// the "New" line stays above it while the user reads.
     var chatNewFrom: UInt64?
@@ -553,6 +566,38 @@ final class AppModel {
 
     /// The app window at the Chat page, at one job's channel or at the
     /// channel shown last.
+    /// What the search palette finds for its text now.
+    var paletteResults: [QuickSearch.Item] {
+        QuickSearch.search(paletteQuery, pages: WindowPage.allCases.map(\.rawValue), jobs: jobs, runs: allRuns,
+                           secrets: secrets, messages: messages, now: now)
+    }
+
+    /// Opens a result of the search palette. `chat` opens the channel of
+    /// its job instead, for a job or a run.
+    func open(_ target: QuickSearch.Target, chat: Bool = false) {
+        paletteShown = false
+        switch target {
+        case let .page(title):
+            if let page = WindowPage(rawValue: title) {
+                self.page = .list
+                windowPage = page
+            }
+        case let .job(id):
+            if chat { return showChat(jobID: id) }
+            jobFilter = id
+            page = .list
+            windowPage = .jobs
+        case let .run(id):
+            if chat, let run = allRuns.first(where: { $0.id == id }) { return showChat(jobID: run.jobId) }
+            showLog(runID: id)
+        case let .secret(name):
+            windowPage = .secrets
+            if let secret = secrets.first(where: { $0.name == name }) { edit(secret) }
+        case let .message(_, jobID):
+            showChat(jobID: jobID)
+        }
+    }
+
     func showChat(jobID: String? = nil) {
         if let jobID { chatJob = jobID }
         windowPage = .chat

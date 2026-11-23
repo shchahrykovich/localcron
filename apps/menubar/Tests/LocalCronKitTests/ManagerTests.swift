@@ -214,8 +214,9 @@ final class ManagerTests: XCTestCase {
         XCTAssertTrue(all.contains("All jobs channel"))
         XCTAssertTrue(all.contains("- `a`\n- `b`"))
         XCTAssertTrue(all.contains("MCP server `localcron-dev`"))
-        XCTAssertEqual(Manager.readOnlyTools(server: "localcron").first, "mcp__localcron__status")
-        XCTAssertFalse(Manager.readOnlyTools(server: "localcron").contains("mcp__localcron__run_job"))
+        XCTAssertEqual(Manager.allowedTools(server: "localcron"), ["mcp__localcron"], "every LocalCron tool, without asking")
+        XCTAssertEqual(Manager.allowedTools(server: "localcron-dev"), ["mcp__localcron-dev"])
+        XCTAssertTrue(text.contains("without a question to the user"))
     }
 
     func testAPromptSaysWhichRunItIsAboutAndTheNewestRuns() {

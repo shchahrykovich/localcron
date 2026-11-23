@@ -131,6 +131,13 @@ A job should just run. When something needs you, a run can say so:
 
 Both take the run from `LOCALCRON_RUN_ID` and work only while it runs.
 
+## Find anything with ⌘F
+
+Press ⌘F on any page of the app window. A search field opens over the page,
+as Spotlight does, and finds jobs (by name, prompt or command), runs (by id
+or result), secrets, messages and pages. ↑ and ↓ choose, Return opens,
+⌘Return opens the chat of a job or a run, Esc closes.
+
 ## Talk to the manager on the Chat page
 
 Write in the box at the bottom of a channel on the **Chat** page, as in
@@ -142,11 +149,15 @@ or prompt, or to run the job again.
 
 - On a run, **Ask the manager** (the speech bubble, or the right-click menu)
   adds that run to your message.
-- The tools that only read run at once. A tool that changes something
-  (`add_job`, `run_job`, `remove_job`, …) waits for **Allow**, **Always
-  Allow … Here** (for the rest of the conversation) or **Reject** in the
-  chat, unless your Claude Code settings already allow it.
-- Return sends; Option-Return starts a new line. ⌘F searches the channel.
+- The LocalCron tools (`add_job`, `run_job`, `remove_job`, …) run without
+  a question: the manager changes a job when you ask it to. Any other tool
+  (Bash, Edit, …) waits for **Allow**, **Always Allow … Here** (for the rest
+  of the conversation) or **Reject** in the chat, unless your Claude Code
+  settings already allow it.
+- Return sends; Option-Return starts a new line. The field in the header
+  searches the channel.
+- The ⇅ button beside "Jobs" sorts the jobs: by recent activity, last
+  run, most runs, most messages or name.
 - **New Conversation with the Manager** in the ··· menu starts a new session.
 - It needs nothing more than Claude Code. It uses your Claude Code login,
   settings and default model. A new session

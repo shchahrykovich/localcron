@@ -213,11 +213,12 @@ public enum Manager {
 
     // MARK: What the session is given
 
-    /// The LocalCron tools that only read. The session uses them without
-    /// asking; every other tool asks the user in the chat first.
-    public static func readOnlyTools(server: String) -> [String] {
-        ["status", "list_jobs", "get_job", "list_runs", "get_run_log", "preview_schedule", "list_secrets"]
-            .map { "mcp__\(server)__\($0)" }
+    /// The tools the session uses without asking: every tool of the
+    /// LocalCron MCP server (`mcp__<server>` allows them all). Other tools
+    /// ask the user in the chat first, unless Claude Code's settings allow
+    /// them.
+    public static func allowedTools(server: String) -> [String] {
+        ["mcp__\(server)"]
     }
 
     /// Added to Claude Code's system prompt for the session of a channel.
@@ -243,7 +244,8 @@ public enum Manager {
         - Use the tools of the MCP server `\(server)`. Read a run's output with \
           `get_run_log`. Read one job with `get_job`: `list_jobs` is long.
         - Change, run, cancel or remove a job only when the user asks for it. The \
-          app asks the user before each such tool; do not ask a second time in the text.
+          LocalCron tools run without a question to the user, so be sure of what \
+          they asked before you call one that changes something.
         - After a change, say in one line what changed.
         - Answer in short Markdown: the app shows it. Name a run by its id.
         - The user's message may start with "[About run …]": that is the run they \

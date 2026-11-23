@@ -11,7 +11,8 @@ import Observation
 @MainActor
 @Observable
 final class ManagerStore {
-    private(set) var chats: [String: ManagerChat] = [:]
+    /// The conversations; every change to them goes through it.
+    let chats: ManagerChats
     /// Channels whose session works on an answer now.
     private(set) var working: Set<String> = []
     /// What the composer holds, per channel: its text and the run it is about.
@@ -34,13 +35,11 @@ final class ManagerStore {
     init(file: URL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(Instance.current.dataFolder).appendingPathComponent("manager-chats.json")) {
         self.file = file
-        if let data = try? Data(contentsOf: file),
-           let saved = try? JSONDecoder().decode([String: ManagerChat].self, from: data) {
-            chats = saved
-        }
+        let saved = (try? Data(contentsOf: file)).flatMap { try? JSONDecoder().decode([String: ManagerChat].self, from: $0) }
+        chats = ManagerChats(saved ?? [:])
     }
 
-    func entries(_ jobID: String?) -> [ManagerEntry] { chats[Manager.key(jobID)]?.entries ?? [] }
+    func entries(_ jobID: String?) -> [ManagerEntry] { chats.entries(Manager.key(jobID)) }
     func isWorking(_ jobID: String?) -> Bool { working.contains(Manager.key(jobID)) }
     func isWaiting(_ entry: ManagerEntry) -> Bool { asks[entry.id] != nil }
 
@@ -52,7 +51,7 @@ final class ManagerStore {
         guard !text.isEmpty, !working.contains(key) else { return }
         let runID = aboutRun[key]
         let run = runID.flatMap { id in model.allRuns.first { $0.id == id } }
-        append(ManagerEntry(id: "user-\(UUID().uuidString)", kind: .user, at: Date(), text: text, runID: runID), to: key)
+        chats.append(ManagerEntry(id: "user-\(UUID().uuidString)", kind: .user, at: Date(), text: text, runID: runID), to: key)
         drafts[key] = nil
         aboutRun[key] = nil
         working.insert(key)
@@ -78,10 +77,8 @@ final class ManagerStore {
     func answer(_ entry: ManagerEntry, with option: ManagerEntry.Option?) {
         guard let ask = asks.removeValue(forKey: entry.id) else { return }
         processes[ask.key]?.session.respond(to: ask.request, Manager.permissionResponse(option, input: ask.input))
-        update(entry.id, in: ask.key) { $0.choice = option?.name ?? "Cancelled" }
-        if option?.kind == "allow_always", let tool = entry.status {
-            chats[ask.key]?.allowed = Array(Set((chats[ask.key]?.allowed ?? []) + [tool])).sorted()
-        }
+        chats.update(entry.id, in: ask.key) { $0.choice = option?.name ?? "Cancelled" }
+        if option?.kind == "allow_always", let tool = entry.status { chats.allow(tool, in: ask.key) }
         save()
     }
 
@@ -97,7 +94,7 @@ final class ManagerStore {
         let key = Manager.key(jobID)
         cancelAsks(of: key)
         processes.removeValue(forKey: key)?.stop()
-        chats[key] = nil
+        chats.remove(key)
         working.remove(key)
         save()
     }
@@ -110,13 +107,13 @@ final class ManagerStore {
         if let process = processes[key], process.isRunning, !process.session.isClosed {
             return try await process.session.send(prompt)
         }
-        let saved = chats[key]?.sessionID
+        let saved = chats.sessionID(key)
         do {
             return try await start(key, jobID: jobID, model: model, resume: saved).session.send(prompt)
         } catch where saved != nil {
             addError("The earlier conversation could not be opened again (\(error.localizedDescription)); this is a new one.",
                      to: key)
-            chats[key]?.sessionID = nil
+            chats.setSession(nil, in: key)
             return try await start(key, jobID: jobID, model: model, resume: nil).session.send(prompt)
         }
     }
@@ -136,7 +133,7 @@ final class ManagerStore {
                                                 jobIDs: model.jobs.map(\.id), server: server)
         let arguments = Manager.arguments(
             instructions: instructions,
-            allowedTools: Manager.readOnlyTools(server: server) + (chats[key]?.allowed ?? []),
+            allowedTools: Manager.allowedTools(server: server) + chats.allowed(key),
             mcpServer: fm.isExecutableFile(atPath: cli) ? (server, cli) : nil,
             resume: resume)
         var environment = ProcessInfo.processInfo.environment
@@ -171,21 +168,12 @@ final class ManagerStore {
     }
 
     private func received(_ message: JSON, key: String) {
-        if let id = message["session_id"]?.string, chats[key]?.sessionID != id {
-            var chat = chats[key] ?? ManagerChat(jobID: key.isEmpty ? nil : key)
-            chat.sessionID = id
-            chats[key] = chat
-        }
+        if let id = message["session_id"]?.string, chats.sessionID(key) != id { chats.setSession(id, in: key) }
         if message["type"]?.string == "control_request" {
             asked(message, key: key)
             return
         }
-        var entries = chats[key]?.entries ?? []
-        let before = entries
-        Manager.apply(message, at: Date(), to: &entries)
-        guard entries != before else { return }
-        Manager.trim(&entries)
-        chats[key]?.entries = entries
+        chats.apply(message, at: Date(), in: key)
     }
 
     private func asked(_ message: JSON, key: String) {
@@ -200,7 +188,7 @@ final class ManagerStore {
         let input = request["input"] ?? .object([:])
         let entry = Manager.permission(request, at: Date())
         asks[entry.id] = (key, requestID, input)
-        append(entry, to: key)
+        chats.append(entry, to: key)
         NSApp.requestUserAttention(.informationalRequest)
     }
 
@@ -211,11 +199,11 @@ final class ManagerStore {
 
     private func cancelAsks(of key: String, answer: Bool = true) {
         for (id, ask) in asks where ask.key == key {
-            if answer, let entry = chats[key]?.entries.first(where: { $0.id == id }) {
+            if answer, let entry = chats.entries(key).first(where: { $0.id == id }) {
                 self.answer(entry, with: nil)
             } else {
                 asks[id] = nil
-                update(id, in: key) { $0.choice = "Cancelled" }
+                chats.update(id, in: key) { $0.choice = "Cancelled" }
             }
         }
     }
@@ -232,25 +220,13 @@ final class ManagerStore {
     // MARK: Entries
 
     private func addError(_ text: String, to key: String) {
-        append(ManagerEntry(id: "error-\(UUID().uuidString)", kind: .error, at: Date(), text: text), to: key)
-    }
-
-    private func append(_ entry: ManagerEntry, to key: String) {
-        var chat = chats[key] ?? ManagerChat(jobID: key.isEmpty ? nil : key)
-        chat.entries.append(entry)
-        Manager.trim(&chat.entries)
-        chats[key] = chat
-    }
-
-    private func update(_ id: String, in key: String, _ change: (inout ManagerEntry) -> Void) {
-        guard let i = chats[key]?.entries.firstIndex(where: { $0.id == id }) else { return }
-        change(&chats[key]!.entries[i])
+        chats.append(ManagerEntry(id: "error-\(UUID().uuidString)", kind: .error, at: Date(), text: text), to: key)
     }
 
     private func save() {
         do {
             try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try JSONEncoder().encode(chats).write(to: file, options: .atomic)
+            try JSONEncoder().encode(chats.chats).write(to: file, options: .atomic)
         } catch {
             NSLog("LocalCron: cannot save the manager chats: \(error.localizedDescription)")
         }

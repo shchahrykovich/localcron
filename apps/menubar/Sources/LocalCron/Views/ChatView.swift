@@ -11,7 +11,7 @@ struct ChatView: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        let channels = Chat.channels(model.messages, runs: model.allRuns, jobIDs: model.jobs.map(\.id))
+        let channels = Chat.channels(model.messages, runs: model.allRuns, jobIDs: model.jobs.map(\.id), order: model.chatOrder)
         HStack(spacing: 0) {
             ChannelList(channels: channels)
                 .frame(width: 230)
@@ -23,8 +23,9 @@ struct ChatView: View {
     }
 }
 
-/// "All jobs", then one row per job, the one with the newest run or message
-/// first.
+/// "All jobs", then one row per job, in the order the user chose in the
+/// menu beside "Jobs": the newest activity first by default. With another
+/// order, each row shows its value: the last run, the runs or the messages.
 private struct ChannelList: View {
     @Environment(AppModel.self) private var model
     let channels: [Chat.Channel]
@@ -39,16 +40,18 @@ private struct ChannelList: View {
                 VStack(alignment: .leading, spacing: 1) {
                     row(nil, title: "All jobs", unread: channels.reduce(0) { $0 + $1.unread },
                         workingCount: channels.filter { $0.working != nil }.count)
-                    Text("Jobs").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                        .padding(.horizontal, 10)
-                        .padding(.top, 14)
-                        .padding(.bottom, 4)
+                    sectionHeader
+                        .padding(.leading, 10)
+                        .padding(.trailing, 4)
+                        .padding(.top, 10)
+                        .padding(.bottom, 2)
                     if channels.isEmpty {
                         Text("No jobs yet.").font(.system(size: 12)).foregroundStyle(.secondary)
                             .padding(.horizontal, 10)
                     }
                     ForEach(channels) { channel in
-                        row(channel.jobID, title: channel.jobID, unread: channel.unread, working: channel.working)
+                        row(channel.jobID, title: channel.jobID, unread: channel.unread, working: channel.working,
+                            value: value(channel))
                     }
                 }
                 .padding(8)
@@ -57,9 +60,43 @@ private struct ChannelList: View {
         .background(Theme.ground)
     }
 
+    private var sectionHeader: some View {
+        @Bindable var model = model
+        return HStack(spacing: 4) {
+            Text(model.chatOrder == .activity ? "Jobs" : "Jobs by \(model.chatOrder.rawValue.lowercased())")
+                .font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+            Spacer()
+            Menu {
+                Picker("Sort Jobs By", selection: $model.chatOrder) {
+                    ForEach(Chat.Order.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.inline)
+            } label: {
+                Image(systemName: "arrow.up.arrow.down").font(.system(size: 10, weight: .semibold))
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .foregroundStyle(.secondary)
+            .help("Sort the jobs")
+        }
+        .frame(height: 22)
+    }
+
+    /// What a row shows on its right for the chosen order.
+    private func value(_ channel: Chat.Channel) -> String? {
+        switch model.chatOrder {
+        case .activity, .name: nil
+        case .lastRun: channel.lastRun.map { Chat.shortAge($0, now: model.now) } ?? "–"
+        case .runs: "\(channel.runs)"
+        case .messages: "\(channel.messages)"
+        }
+    }
+
     /// A job whose run works now looks as that run does on the Logs page:
     /// the status icon instead of the job's, in a light accent row.
-    private func row(_ jobID: String?, title: String, unread: Int, working: Run? = nil, workingCount: Int = 0) -> some View {
+    private func row(_ jobID: String?, title: String, unread: Int, working: Run? = nil, workingCount: Int = 0,
+                     value: String? = nil) -> some View {
         let selected = model.chatJob == jobID
         let workingText = working.map { RunText.line($0, now: model.now).text }
         return Button { model.chatJob = jobID } label: {
@@ -81,6 +118,10 @@ private struct ChannelList: View {
                     .foregroundStyle(selected ? Color.white : unread > 0 ? .primary : .secondary)
                     .lineLimit(1).truncationMode(.middle)
                 Spacer(minLength: 4)
+                if let value {
+                    Text(value).font(.system(size: 11).monospacedDigit())
+                        .foregroundStyle(selected ? Color.white.opacity(0.85) : .secondary)
+                }
                 if workingCount > 0 {
                     HStack(spacing: 3) {
                         Image(systemName: RunStatus.running.symbol).font(.system(size: 10))
@@ -177,9 +218,6 @@ private struct Conversation: View {
         }
         .padding(.horizontal, 16)
         .frame(height: 52)
-        .background {
-            Button("Search") { searching = true }.keyboardShortcut("f").hidden()
-        }
     }
 
     private func subtitle(job: JobView?, groups: [Chat.Group]) -> String {
@@ -296,7 +334,7 @@ private struct SearchBox: View {
         .background(Theme.field, in: RoundedRectangle(cornerRadius: 7))
         .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(focused.wrappedValue ? Theme.accent.opacity(0.6) : Theme.line,
                                                                 lineWidth: focused.wrappedValue ? 1 : 0.5))
-        .help("Search this channel (⌘F)")
+        .help("Search this channel")
     }
 }
 
@@ -693,7 +731,7 @@ private struct Composer: View {
                     ProgressView().controlSize(.small)
                     Text("The manager is working…").font(.system(size: 11)).foregroundStyle(.secondary)
                 } else {
-                    Text("The manager is a Claude session with the LocalCron tools. It asks you before it changes or runs a job.")
+                    Text("The manager is a Claude session with the LocalCron tools. It uses them without asking; other tools ask you first.")
                         .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer(minLength: 8)

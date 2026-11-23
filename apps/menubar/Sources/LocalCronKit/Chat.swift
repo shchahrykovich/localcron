@@ -1,6 +1,7 @@
 // The Chat page of the app window: the runs of each job and the messages
-// they sent, as a conversation, one channel per job, as in Slack. Only jobs
-// write; the user reads.
+// they sent, as a conversation, one channel per job, as in Slack. The user
+// writes to the manager (Manager.swift), whose answers go in the same
+// channel.
 
 import Foundation
 
@@ -17,23 +18,55 @@ public enum Chat {
         public var id: String { jobID }
     }
 
-    /// One run as a post: its status line, then the messages it sent,
-    /// oldest first. `run` is nil when the daemon no longer keeps the run
-    /// but still keeps its messages.
+    /// A post: one run, with its status line and the messages it sent,
+    /// oldest first; or what the user wrote, or the manager answered, in a
+    /// row. `run` is nil when the daemon no longer keeps the run but still
+    /// keeps its messages.
     public struct Group: Equatable, Sendable, Identifiable {
+        public enum Author: Equatable, Sendable {
+            case job, user, manager
+        }
+
+        public var author: Author = .job
         public var jobID: String
         public var runID: String
         /// When the run started (queued, if it never started), or the time
-        /// of its first message without the run.
+        /// of its first message without the run, or of the first entry.
         public var at: Date
         public var run: Run?
         public var messages: [Message]
-        public var id: String { runID }
+        /// The user's or the manager's entries.
+        public var talk: [ManagerEntry] = []
+        /// The post comes a few minutes after one by the same author on the
+        /// same day: as in Slack, it shows no name and picture.
+        public var continues = false
+
+        public var id: String { author == .job ? runID : "talk-\(runID)" }
+
+        /// The time of its last part.
+        public var end: Date {
+            max(talk.last?.at ?? at, messages.compactMap { ApiDate.parse($0.at) }.max() ?? at)
+        }
 
         public func contains(message id: UInt64?) -> Bool {
             messages.contains { $0.id == id }
         }
+
+        func sameAuthor(as other: Group) -> Bool {
+            author == other.author && (author != .job || jobID == other.jobID)
+        }
+
+        /// Its text has `query` (lowercased) in it.
+        func matches(_ query: String, now: Date) -> Bool {
+            if jobID.lowercased().contains(query) || runID.lowercased().contains(query) { return true }
+            if let run, RunText.line(run, now: now).text.lowercased().contains(query) { return true }
+            return messages.contains { $0.text.lowercased().contains(query) }
+                || talk.contains { $0.text.lowercased().contains(query) }
+        }
     }
+
+    /// Posts by one author within this time join, as in Slack.
+    public static let joinWithin: TimeInterval = 10 * 60
 
     /// The posts of one day, oldest first.
     public struct Day: Equatable, Sendable, Identifiable {
@@ -88,9 +121,10 @@ public enum Chat {
     }
 
     /// A channel as days of posts, oldest first: one post per run, with the
-    /// messages it sent.
-    public static func timeline(_ messages: [Message], runs: [Run] = [], jobID: String?, now: Date = Date(),
-                                calendar: Calendar = .current) -> [Day] {
+    /// messages it sent, and the conversation with the manager. With a
+    /// `query`, only the posts whose text has it.
+    public static func timeline(_ messages: [Message], runs: [Run] = [], talk: [ManagerEntry] = [], jobID: String?,
+                                query: String = "", now: Date = Date(), calendar: Calendar = .current) -> [Day] {
         var groups: [String: Group] = [:]
         for run in runs where jobID == nil || run.jobId == jobID {
             guard let at = run.shownAt, groups[run.id] == nil else { continue }
@@ -102,13 +136,36 @@ public enum Chat {
             }
             groups[message.runId]?.messages.append(message)
         }
+        var posts = groups.values.sorted { ($0.at, $0.runID) < ($1.at, $1.runID) }
+        // The conversation keeps its own order; each post goes in after the
+        // runs that started before it.
+        var said: [Group] = []
+        for entry in talk {
+            let author: Group.Author = entry.fromUser ? .user : .manager
+            if var last = said.last, last.author == author, entry.at.timeIntervalSince(last.end) < joinWithin,
+               calendar.isDate(entry.at, inSameDayAs: last.at) {
+                last.talk.append(entry)
+                said[said.count - 1] = last
+            } else {
+                said.append(Group(author: author, jobID: jobID ?? "", runID: entry.id, at: entry.at, run: nil,
+                                  messages: [], talk: [entry]))
+            }
+        }
+        for post in said {
+            let i = posts.firstIndex { $0.at > post.at } ?? posts.endIndex
+            posts.insert(post, at: i)
+        }
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        if !q.isEmpty { posts = posts.filter { $0.matches(q, now: now) } }
         var days: [Day] = []
-        for group in groups.values.sorted(by: { ($0.at, $0.runID) < ($1.at, $1.runID) }) {
-            let day = calendar.startOfDay(for: group.at)
+        for var post in posts {
+            let day = calendar.startOfDay(for: post.at)
             if days.last?.day != day {
                 days.append(Day(day: day, title: Formatting.dayTitle(day, now: now, calendar: calendar), groups: []))
+            } else if let previous = days.last?.groups.last {
+                post.continues = post.sameAuthor(as: previous) && post.at.timeIntervalSince(previous.end) < joinWithin
             }
-            days[days.count - 1].groups.append(group)
+            days[days.count - 1].groups.append(post)
         }
         return days
     }

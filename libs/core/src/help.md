@@ -185,6 +185,28 @@ Both work only while the run is running, and take the run from
   is refused. Give `--permission-mode` or `--arg --allowedTools …` only for
   what you accept the job may do.
 
+## Talk to the manager on the Chat page
+
+Write in the box at the bottom of a channel on the **Chat** page, as in
+Slack. The app starts the manager: the `claude` command you installed, the
+same one claude jobs run, in a session of its own. It knows LocalCron, the
+channel's job and its newest runs, works in the job's folder and has the
+LocalCron MCP tools. Ask it why a run failed, to change the job's schedule
+or prompt, or to run the job again.
+
+- On a run, **Ask the manager** (the speech bubble, or the right-click menu)
+  adds that run to your message.
+- The tools that only read run at once. A tool that changes something
+  (`add_job`, `run_job`, `remove_job`, …) waits for **Allow**, **Always
+  Allow … Here** (for the rest of the conversation) or **Reject** in the
+  chat, unless your Claude Code settings already allow it.
+- Return sends; Option-Return starts a new line. ⌘F searches the channel.
+- **New Conversation with the Manager** in the ··· menu starts a new session.
+- It needs nothing more than Claude Code. It uses your Claude Code login,
+  settings and default model. A new session
+  reads your Claude Code setup (CLAUDE.md, MCP servers), so its first answer
+  can take many cached tokens.
+
 ## Watch an agent run in its console
 
 **Install tmux** (`brew install tmux`), and every `claude` job runs in a

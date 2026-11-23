@@ -130,10 +130,15 @@ public enum MessageMarkdown {
         return ListPosition(marker: first ? (ordered ? "\(ordinal)." : "•") : "", depth: depth)
     }
 
+    /// The color behind the words a search found.
+    public static let highlightColor = NSColor.systemYellow.withAlphaComponent(0.45)
+
     /// Inline text for a text view: fonts for bold, italic and code, a
-    /// pointing hand on links.
+    /// pointing hand on links, and `highlight` marked wherever it is, in any
+    /// case.
     public static func attributed(_ text: AttributedString, size: CGFloat, weight: NSFont.Weight = .regular,
-                                  monospaced: Bool = false, color: NSColor = .labelColor) -> NSAttributedString {
+                                  monospaced: Bool = false, color: NSColor = .labelColor,
+                                  highlight: String = "") -> NSAttributedString {
         let out = NSMutableAttributedString()
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineSpacing = 2
@@ -157,7 +162,27 @@ public enum MessageMarkdown {
             }
             out.append(NSAttributedString(string: String(text[run.range].characters), attributes: attributes))
         }
+        for range in matches(of: highlight, in: out.string) {
+            out.addAttribute(.backgroundColor, value: highlightColor, range: range)
+        }
         return out
+    }
+
+    /// Where `query` (trimmed, in any case) is in `text`.
+    public static func matches(of query: String, in text: String) -> [NSRange] {
+        let query = query.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return [] }
+        let text = text as NSString
+        var found: [NSRange] = []
+        var from = 0
+        while from < text.length {
+            let range = text.range(of: query, options: [.caseInsensitive, .diacriticInsensitive],
+                                   range: NSRange(location: from, length: text.length - from))
+            if range.location == NSNotFound { break }
+            found.append(range)
+            from = range.location + max(range.length, 1)
+        }
+        return found
     }
 }
 
@@ -244,11 +269,13 @@ public struct MessageBody: View {
     let blocks: [MessageMarkdown.Block]
     let colors: Colors
     var size: CGFloat = 13
+    var highlight = ""
 
-    public init(_ text: String, colors: Colors, size: CGFloat = 13) {
+    public init(_ text: String, colors: Colors, size: CGFloat = 13, highlight: String = "") {
         blocks = MessageMarkdown.blocks(text)
         self.colors = colors
         self.size = size
+        self.highlight = highlight
     }
 
     public var body: some View {
@@ -281,7 +308,8 @@ public struct MessageBody: View {
 
     private func text(_ inline: AttributedString, size: CGFloat? = nil, weight: NSFont.Weight = .regular,
                       monospaced: Bool = false) -> some View {
-        LinkText(MessageMarkdown.attributed(inline, size: size ?? self.size, weight: weight, monospaced: monospaced),
+        LinkText(MessageMarkdown.attributed(inline, size: size ?? self.size, weight: weight, monospaced: monospaced,
+                                            highlight: highlight),
                  linkColor: colors.link)
     }
 

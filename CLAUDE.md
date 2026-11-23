@@ -101,6 +101,23 @@ LocalCron.app (Swift) ───────────────────�
   groups its text by block, and `MessageBody` draws each block; text goes in
   `LinkText`, an `NSTextView`, because SwiftUI's `Text` on macOS 14 cannot
   show the pointing hand over a link. A soft line break stays a line break.
+  The user writes to the manager in the box at the bottom: the user's own
+  `claude`, found on the login shell's PATH as jobs find it, one process
+  per channel (`claude -p --input-format stream-json --output-format
+  stream-json --permission-prompt-tool stdio`; `LocalCronKit/ClaudeStream.swift`
+  holds the line protocol: a user message in, stream events out until
+  `result`, `control_request` `can_use_tool` answered with a
+  `control_response`). `LocalCronKit/Manager.swift` turns the lines into
+  entries and builds the instructions, the prompt and the arguments;
+  `LocalCron/ManagerStore.swift` runs the processes (stopped after 15 min
+  idle), saves each conversation with its session id in
+  `manager-chats.json` in the data folder and goes on with `--resume`. The
+  session works in the job's folder, gets the bundled CLI as its MCP server
+  (`--mcp-config`), and may use only the read-only LocalCron tools without
+  asking (`Manager.readOnlyTools`, plus tools the user allowed for the
+  conversation); every other tool shows a card with Allow / Always / Reject.
+  `Chat.timeline` puts the conversation between the run posts by time and
+  joins posts of one author within 10 minutes, as Slack does.
   A channel's messages become read only while
   that window is the key window. A
   reported error counts as a failed run in the app (`Run.failed`). Codex

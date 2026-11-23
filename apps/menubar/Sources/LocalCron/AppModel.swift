@@ -53,6 +53,8 @@ final class AppModel {
     }
 
     let client = DaemonClient()
+    /// The conversations with the manager on the Chat page.
+    let manager = ManagerStore()
     var status: StatusResult?
     var jobs: [JobView] = []
     var runs: [Run] = []

@@ -99,4 +99,13 @@ final class MessageMarkdownTests: XCTestCase {
         XCTAssertGreaterThan(narrow.height, wide.height * 3, "it wraps into more lines")
         XCTAssertLessThan(wide.width, 2000, "a short text takes its own width, not all it may")
     }
+
+    func testASearchMarksEachPlaceInAnyCase() {
+        XCTAssertEqual(MessageMarkdown.matches(of: " full ", in: "Disk FULL, still full"), [NSRange(location: 5, length: 4),
+                                                                                             NSRange(location: 17, length: 4)])
+        XCTAssertEqual(MessageMarkdown.matches(of: "", in: "abc"), [])
+        let out = MessageMarkdown.attributed(AttributedString("the disk is full"), size: 13, highlight: "DISK")
+        XCTAssertEqual(out.attribute(.backgroundColor, at: 4, effectiveRange: nil) as? NSColor, MessageMarkdown.highlightColor)
+        XCTAssertNil(out.attribute(.backgroundColor, at: 0, effectiveRange: nil))
+    }
 }

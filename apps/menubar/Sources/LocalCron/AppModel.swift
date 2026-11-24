@@ -102,6 +102,7 @@ final class AppModel {
         didSet {
             UserDefaults.standard.set(windowPage.rawValue, forKey: WindowPage.defaultsKey)
             if windowPage == .chat, oldValue != .chat { chatShown() }
+            if windowPage != .jobs { pageAfterEditor = nil }
         }
     }
     /// The app window is the key window: the user looks at its page.
@@ -424,8 +425,8 @@ final class AppModel {
             let result = try await client.setJob(job, replace: !draft.isNew)
             actionError = nil
             await refresh()
-            page = .list
             windowPage = .jobs
+            closeEditor()
             if result.job.secretsAllowed == false {
                 await allowSecrets(result.job)
             }
@@ -518,9 +519,22 @@ final class AppModel {
         openAppWindow()
     }
 
-    func edit(_ job: JobView) {
+    /// Opens the editor of a job. `from` is the page to go back to when
+    /// the editor closes, for an edit started outside the Jobs page.
+    func edit(_ job: JobView, from: WindowPage? = nil) {
+        if let from, from != .jobs { windowPage = .jobs }
+        pageAfterEditor = from == .jobs ? nil : from
         page = .editor(JobDraft(job: job.job))
     }
+
+    /// Closes the editor: back to the page the edit started on.
+    func closeEditor() {
+        page = .list
+        if let back = pageAfterEditor { windowPage = back }
+        pageAfterEditor = nil
+    }
+
+    @ObservationIgnored private var pageAfterEditor: WindowPage?
 
     /// The Runs page, filtered to one job.
     func showRuns(jobID: String) {

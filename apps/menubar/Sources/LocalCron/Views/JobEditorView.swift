@@ -18,7 +18,7 @@ struct JobEditorView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Button("Cancel") { model.page = .list }
+                Button("Cancel") { model.closeEditor() }
                     .buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.accent)
                     .keyboardShortcut(.cancelAction)
                 Spacer()

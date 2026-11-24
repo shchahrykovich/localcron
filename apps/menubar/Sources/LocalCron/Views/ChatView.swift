@@ -199,12 +199,17 @@ private struct Conversation: View {
                 Text(subtitle(job: job, groups: groups)).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer(minLength: 12)
-            if let job { runButtons(job) }
+            if let job {
+                runButtons(job)
+                SmallButton("Edit") { model.edit(job, from: .chat) }
+                    .help("Change \(job.id): its prompt, schedule and settings")
+            }
             SearchBox(prompt: "Search \(name)", text: $query, focused: $searching)
                 .frame(width: 230)
             Menu {
                 if let job {
                     runMenu(job)
+                    Button("Edit…") { model.edit(job, from: .chat) }
                     Divider()
                 }
                 Button("New Conversation with the Manager") { model.manager.startOver(jobID: model.chatJob) }

@@ -64,6 +64,34 @@ final class QuickSearchTests: XCTestCase {
         XCTAssertEqual(run.detail, "Today, Monday 23 November, 09:05 · Failed with exit code 3 after 1 min 0 s")
         XCTAssertEqual(try search("failed").map(\.target), [.run("apple-books-charts.40")])
     }
+
+    /// The palette searches again on every key, on the main thread: with as
+    /// many runs as a Mac has after some weeks, one search must take a few
+    /// milliseconds, or typing stutters.
+    func testASearchOverManyRunsIsFastEnoughForEveryKey() throws {
+        let prompt = String(repeating: "Write the next article for the blog and push it to main. ", count: 80)
+        let jobs = try (0..<20).map { try job("weekly-job-\($0)", prompt: prompt) }
+        let base = ApiDate.parse("2026-01-01T00:00:00Z")!, iso = ISO8601DateFormatter()
+        let runs = (0..<650).map { i -> Run in
+            let start = base.addingTimeInterval(Double(i) * 3600)
+            return makeRun("weekly-job-\(i % 20).\(i)", .succeeded, start: iso.string(from: start),
+                           end: iso.string(from: start.addingTimeInterval(600)), exit: 0)
+        }
+        let messages = (0..<200).map {
+            Message(id: UInt64($0), jobId: "weekly-job-\($0 % 20)", runId: "weekly-job-\($0 % 20).\($0)",
+                    at: "2026-11-23T08:00:00Z", text: "Done: " + String(repeating: "a long result line. ", count: 20), read: true)
+        }
+        let built = Date()
+        let corpus = QuickSearch.corpus(pages: ["Jobs", "Runs"], jobs: jobs, runs: runs, secrets: [], messages: messages,
+                                        now: now, calendar: utcCalendar)
+        print("QuickSearch: corpus in \(Int(Date().timeIntervalSince(built) * 1000)) ms")
+        _ = QuickSearch.search("w", in: corpus)
+        let started = Date()
+        for query in ["w", "we", "wee", "week"] { XCTAssertFalse(QuickSearch.search(query, in: corpus).isEmpty) }
+        let perKey = Date().timeIntervalSince(started) / 4
+        print("QuickSearch: \(Int(perKey * 1000)) ms per key")
+        XCTAssertLessThan(perKey, 0.015, "one search took \(Int(perKey * 1000)) ms")
+    }
 }
 
 final class ChannelOrderTests: XCTestCase {

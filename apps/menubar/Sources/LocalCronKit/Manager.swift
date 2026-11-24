@@ -48,9 +48,25 @@ public struct ManagerEntry: Codable, Equatable, Identifiable, Sendable {
     public var options: [Option]
     /// The name of the option the user chose, or "Cancelled".
     public var choice: String?
+    /// The files and pictures a user message had; nil in conversations
+    /// saved before there were any.
+    public var files: [File]?
+
+    /// A file of a user message, as the conversation keeps it: no bytes.
+    public struct File: Codable, Equatable, Sendable {
+        public var name: String
+        public var path: String?
+        public var image: Bool
+
+        public init(name: String, path: String?, image: Bool) {
+            self.name = name
+            self.path = path
+            self.image = image
+        }
+    }
 
     public init(id: String, kind: Kind, at: Date, text: String, runID: String? = nil, status: String? = nil,
-                options: [Option] = [], choice: String? = nil) {
+                options: [Option] = [], choice: String? = nil, files: [File]? = nil) {
         self.id = id
         self.kind = kind
         self.at = at
@@ -59,6 +75,7 @@ public struct ManagerEntry: Codable, Equatable, Identifiable, Sendable {
         self.status = status
         self.options = options
         self.choice = choice
+        self.files = files
     }
 
     /// A user message or a manager entry.

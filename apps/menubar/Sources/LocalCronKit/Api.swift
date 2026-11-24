@@ -40,11 +40,19 @@ public enum ApiDate {
 
     private static let lock = NSLock()
 
+    /// Parsed times, kept: the views parse the same run times again and
+    /// again, and ISO8601DateFormatter is slow. Emptied when it grows large.
+    nonisolated(unsafe) private static var parsed: [String: Date] = [:]
+
     public static func parse(_ text: String?) -> Date? {
         guard let text else { return nil }
         lock.lock()
         defer { lock.unlock() }
-        return plain.date(from: text) ?? fractional.date(from: text)
+        if let date = parsed[text] { return date }
+        guard let date = plain.date(from: text) ?? fractional.date(from: text) else { return nil }
+        if parsed.count >= 50_000 { parsed.removeAll(keepingCapacity: true) }
+        parsed[text] = date
+        return date
     }
 }
 

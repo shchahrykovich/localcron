@@ -43,6 +43,18 @@ final class ClaudeSessionTests: XCTestCase {
         XCTAssertEqual(seen.all.map { $0["type"] }, ["system"], "the result and control responses are not handed on")
     }
 
+    func testAMessageWithAPictureSendsItsContentBlocks() async throws {
+        let wire = Wire()
+        let session = ClaudeSession { wire.add($0) }
+        let content: JSON = [["type": "image", "source": ["type": "base64", "media_type": "image/png", "data": "AAAA"]],
+                             ["type": "text", "text": "see"]]
+        async let answer = session.send(content: content)
+        while wire.all.isEmpty { await Task.yield() }
+        XCTAssertEqual(wire.all[0], ["type": "user", "message": ["role": "user", "content": content]])
+        session.receive(line: line(#"{"type":"result","subtype":"success","session_id":"s1","result":"ok"}"#))
+        _ = try await answer
+    }
+
     func testAnswersAndAStopAreControlLines() {
         let wire = Wire()
         let session = ClaudeSession { wire.add($0) }
@@ -243,6 +255,48 @@ final class ManagerTests: XCTestCase {
         XCTAssertEqual(back["deps"], chat)
         XCTAssertEqual(back[""]?.entries, [])
         XCTAssertNil(back[""]?.allowed)
+    }
+
+    func testAUserMessageKeepsItsFilesAndAnOldSavedEntryStillReads() throws {
+        let entry = ManagerEntry(id: "u1", kind: .user, at: t0, text: "look", files: [
+            ManagerEntry.File(name: "shot.png", path: "/tmp/shot.png", image: true),
+            ManagerEntry.File(name: "notes.txt", path: "/tmp/notes.txt", image: false),
+        ])
+        let back = try JSONDecoder().decode(ManagerEntry.self, from: JSONEncoder().encode(entry))
+        XCTAssertEqual(back, entry)
+        let old = #"{"id":"u0","kind":"user","at":0,"text":"hi","options":[]}"#
+        let saved = try JSONDecoder().decode(ManagerEntry.self, from: Data(old.utf8))
+        XCTAssertNil(saved.files, "saved before there were files")
+        XCTAssertEqual(saved.text, "hi")
+    }
+}
+
+final class AttachmentTests: XCTestCase {
+    private let png = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3])
+
+    func testAPictureIsKnownByItsExtensionOrItsFirstBytes() {
+        XCTAssertEqual(["png", "JPG", "jpeg", "gif", "webp", "tiff", "pdf", ""].map { Attachments.mediaType(forExtension: $0) },
+                       ["image/png", "image/jpeg", "image/jpeg", "image/gif", "image/webp", nil, nil, nil])
+        XCTAssertEqual(Attachments.mediaType(sniffing: png), "image/png")
+        XCTAssertEqual(Attachments.mediaType(sniffing: Data([0xFF, 0xD8, 0xFF, 0xE0])), "image/jpeg")
+        XCTAssertEqual(Attachments.mediaType(sniffing: Data("GIF89a".utf8)), "image/gif")
+        XCTAssertEqual(Attachments.mediaType(sniffing: Data("RIFF\0\0\0\0WEBPVP8 ".utf8)), "image/webp")
+        XCTAssertNil(Attachments.mediaType(sniffing: Data("MM\0*".utf8)), "TIFF is turned into PNG first")
+        XCTAssertNil(Attachments.mediaType(sniffing: Data()))
+    }
+
+    func testPicturesGoAsImageBlocksBeforeTheTextAndOtherFilesAsPaths() {
+        let picture = Attachment(name: "shot.png", path: "/tmp/shot.png", mediaType: "image/png", data: png)
+        let file = Attachment(name: "report.csv", path: "/Users/me/report.csv")
+        XCTAssertEqual(Attachments.content("what is wrong here?", files: [picture, file]), [
+            ["type": "image", "source": ["type": "base64", "media_type": "image/png", "data": .string(png.base64EncodedString())]],
+            ["type": "text", "text": "what is wrong here?\n\nAttached file: /Users/me/report.csv"],
+        ])
+        XCTAssertEqual(Attachments.content("", files: [picture]).array?.count, 1, "a picture alone needs no text block")
+        XCTAssertEqual(Attachments.content("", files: [file]), [["type": "text", "text": "Attached file: /Users/me/report.csv"]])
+        XCTAssertEqual(Attachments.content("hi", files: []), [["type": "text", "text": "hi"]])
+        XCTAssertEqual(picture.saved, ManagerEntry.File(name: "shot.png", path: "/tmp/shot.png", image: true))
+        XCTAssertFalse(file.isImage)
     }
 }
 

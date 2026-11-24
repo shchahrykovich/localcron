@@ -568,9 +568,27 @@ final class AppModel {
     /// channel shown last.
     /// What the search palette finds for its text now.
     var paletteResults: [QuickSearch.Item] {
-        QuickSearch.search(paletteQuery, pages: WindowPage.allCases.map(\.rawValue), jobs: jobs, runs: allRuns,
-                           secrets: secrets, messages: messages, now: now)
+        QuickSearch.search(paletteQuery, in: paletteCorpus)
     }
+
+    /// What the palette searches in, made again only when the jobs, runs,
+    /// secrets or messages change, or a minute passed (for "Today" and the
+    /// time of a run that goes on): not on every key.
+    private var paletteCorpus: QuickSearch.Corpus {
+        let key = PaletteCorpusKey(jobs: jobs, runs: runs, history: history, secrets: secrets, messages: messages,
+                                   minute: Int(now.timeIntervalSince1970 / 60))
+        if let cached = paletteCorpusCache, cached.key == key { return cached.corpus }
+        let corpus = QuickSearch.corpus(pages: WindowPage.allCases.map(\.rawValue), jobs: jobs, runs: allRuns,
+                                        secrets: secrets, messages: messages, now: now)
+        paletteCorpusCache = (key, corpus)
+        return corpus
+    }
+
+    private struct PaletteCorpusKey: Equatable {
+        var jobs: [JobView], runs: [Run], history: [Run], secrets: [SecretInfo], messages: [Message], minute: Int
+    }
+
+    @ObservationIgnored private var paletteCorpusCache: (key: PaletteCorpusKey, corpus: QuickSearch.Corpus)?
 
     /// Opens a result of the search palette. `chat` opens the channel of
     /// its job instead, for a job or a run.

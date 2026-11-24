@@ -18,6 +18,10 @@ final class ManagerStore {
     /// What the composer holds, per channel: its text and the run it is about.
     var drafts: [String: String] = [:]
     var aboutRun: [String: String] = [:]
+    /// The files and pictures added to the composer, per channel.
+    var attachments: [String: [Attachment]] = [:]
+    /// The composer has the keyboard: ⌘V there may add a picture.
+    @ObservationIgnored var composerFocused = false
     /// Goes up when the composer should take the keyboard: after "Ask the
     /// manager about this run".
     var focusRequest = 0
@@ -48,21 +52,25 @@ final class ManagerStore {
     func send(_ text: String, jobID: String?, model: AppModel) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let key = Manager.key(jobID)
-        guard !text.isEmpty, !working.contains(key) else { return }
+        let files = attachments[key] ?? []
+        guard !text.isEmpty || !files.isEmpty, !working.contains(key) else { return }
         let runID = aboutRun[key]
         let run = runID.flatMap { id in model.allRuns.first { $0.id == id } }
-        chats.append(ManagerEntry(id: "user-\(UUID().uuidString)", kind: .user, at: Date(), text: text, runID: runID), to: key)
+        chats.append(ManagerEntry(id: "user-\(UUID().uuidString)", kind: .user, at: Date(), text: text, runID: runID,
+                                  files: files.isEmpty ? nil : files.map(\.saved)), to: key)
         drafts[key] = nil
         aboutRun[key] = nil
+        attachments[key] = nil
         working.insert(key)
         idle[key]?.cancel()
         save()
         let recent = model.allRuns.filter { jobID == nil || $0.jobId == jobID }
             .sorted { ($0.shownAt ?? .distantPast) > ($1.shownAt ?? .distantPast) }
         let prompt = Manager.prompt(text, about: run, recent: recent, now: Date())
+        let content = Attachments.content(prompt, files: files)
         Task {
             do {
-                let result = try await self.turn(prompt, key: key, jobID: jobID, model: model)
+                let result = try await self.turn(content, key: key, jobID: jobID, model: model)
                 if let failure = Manager.failure(result) { self.addError(failure, to: key) }
             } catch {
                 self.addError(error.localizedDescription, to: key)
@@ -103,18 +111,18 @@ final class ManagerStore {
 
     /// Sends one message, starting the channel's process when it has none.
     /// A saved session that Claude cannot open again is replaced by a new one.
-    private func turn(_ prompt: String, key: String, jobID: String?, model: AppModel) async throws -> JSON {
+    private func turn(_ content: JSON, key: String, jobID: String?, model: AppModel) async throws -> JSON {
         if let process = processes[key], process.isRunning, !process.session.isClosed {
-            return try await process.session.send(prompt)
+            return try await process.session.send(content: content)
         }
         let saved = chats.sessionID(key)
         do {
-            return try await start(key, jobID: jobID, model: model, resume: saved).session.send(prompt)
+            return try await start(key, jobID: jobID, model: model, resume: saved).session.send(content: content)
         } catch where saved != nil {
             addError("The earlier conversation could not be opened again (\(error.localizedDescription)); this is a new one.",
                      to: key)
             chats.setSession(nil, in: key)
-            return try await start(key, jobID: jobID, model: model, resume: nil).session.send(prompt)
+            return try await start(key, jobID: jobID, model: model, resume: nil).session.send(content: content)
         }
     }
 

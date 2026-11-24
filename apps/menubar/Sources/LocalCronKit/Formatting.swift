@@ -139,14 +139,25 @@ public enum Formatting {
         args.contains(where: { $0.contains(" ") }) ? args.joined(separator: "\n") : args.joined(separator: " ")
     }
 
+    /// One formatter per format, calendar and time zone, kept: making a
+    /// DateFormatter is slow, and the search palette formats every run on
+    /// every key. DateFormatter is thread-safe for formatting.
     static func formatter(_ format: String, _ calendar: Calendar) -> DateFormatter {
+        let key = "\(format)|\(calendar.identifier)|\(calendar.timeZone.identifier)|\(calendar.firstWeekday)"
+        formattersLock.lock()
+        defer { formattersLock.unlock() }
+        if let f = formatters[key] { return f }
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_GB")
         f.calendar = calendar
         f.timeZone = calendar.timeZone
         f.dateFormat = format
+        formatters[key] = f
         return f
     }
+
+    nonisolated(unsafe) private static var formatters: [String: DateFormatter] = [:]
+    private static let formattersLock = NSLock()
 
     private static func weekday(_ d: Date, calendar: Calendar) -> String { formatter("EEE", calendar).string(from: d) }
     private static func day(_ d: Date, calendar: Calendar, year: Bool = true) -> String {

@@ -1,6 +1,7 @@
 import AppKit
 import LocalCronKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// The Chat page of the app window, as in Slack: a channel per job on the
 /// left; on the right each run of the chosen channel as a post, with its
@@ -225,15 +226,10 @@ private struct Conversation: View {
         .frame(height: 52)
     }
 
-    /// The buttons next to the search field: Open Terminal while the job
-    /// runs in a console, else Run Now and Run Now, Instead of its next time.
+    /// The buttons next to the search field: Run Now and Run Now, Instead of
+    /// its next time. None while the job runs: its post has Open Terminal.
     @ViewBuilder private func runButtons(_ job: JobView) -> some View {
-        if let active = job.activeRun {
-            if active.console != nil {
-                SmallButton("Open Terminal") { model.openTerminal(active) }
-                    .help("Its Claude Code console: watch it and type into it")
-            }
-        } else {
+        if job.activeRun == nil {
             HStack(spacing: 6) {
                 if let next = ApiDate.parse(job.nextRun) {
                     SmallButton("Run Now, Instead of \(Formatting.next(next, now: model.now))") {
@@ -573,16 +569,23 @@ private struct RunAttachment: View {
                     .help(RunText.tokens(usage))
                     .padding(.top, 2)
             }
+            if run.status == .running, run.console != nil {
+                SmallButton("Open Terminal") { model.openTerminal(run) }
+                    .help("Its Claude Code console: watch it and type into it")
+            }
             SmallButton("View Log") { model.showLog(run) }
                 .help("The output of \(run.id)")
         }
         .padding(.vertical, 2)
         .fixedSize(horizontal: false, vertical: true)
-        .frame(maxWidth: 720, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .contextMenu {
             Button("Ask the Manager About This Run") {
                 model.manager.aboutRun[Manager.key(model.chatJob)] = run.id
                 model.manager.focusRequest += 1
+            }
+            if run.status == .running, run.console != nil {
+                Button("Open Terminal") { model.openTerminal(run) }
             }
             Button("View Log") { model.showLog(run) }
             Button("Reveal Log in Finder") { model.revealLog(run) }
@@ -663,7 +666,10 @@ private struct EntryView: View {
                     .pointingHandCursor()
                     .help("Show the log of \(runID)")
                 }
-                markdown(entry.text)
+                if let files = entry.files, !files.isEmpty {
+                    FileStrip(files: files.map { ($0.name, $0.path, $0.image) })
+                }
+                if !entry.text.isEmpty { markdown(entry.text) }
             }
         case .agent:
             markdown(entry.text)
@@ -698,7 +704,7 @@ private struct EntryView: View {
     private func markdown(_ text: String) -> some View {
         MessageBody(text, colors: messageColors, highlight: query)
             .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: 760, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -743,6 +749,8 @@ private struct PermissionCard: View {
 private struct Composer: View {
     @Environment(AppModel.self) private var model
     @FocusState private var focused: Bool
+    @State private var dropping = false
+    @State private var pasteMonitor: Any?
 
     var body: some View {
         let manager = model.manager
@@ -764,6 +772,12 @@ private struct Composer: View {
                 .padding(.horizontal, 7).padding(.vertical, 3)
                 .background(Theme.accentSoft, in: Capsule())
             }
+            let files = manager.attachments[key] ?? []
+            if !files.isEmpty {
+                FileStrip(files: files.map { ($0.name, $0.path, $0.isImage) }, data: files.map(\.data)) { index in
+                    manager.detach(files[index].id, jobID: model.chatJob)
+                }
+            }
             TextField(placeholder, text: Binding(get: { manager.drafts[key] ?? "" }, set: { manager.drafts[key] = $0 }),
                       axis: .vertical)
                 .textFieldStyle(.plain)
@@ -775,9 +789,6 @@ private struct Composer: View {
                 if working {
                     ProgressView().controlSize(.small)
                     Text("The manager is working…").font(.system(size: 11)).foregroundStyle(.secondary)
-                } else {
-                    Text("The manager is a Claude session with the LocalCron tools. It uses them without asking; other tools ask you first.")
-                        .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer(minLength: 8)
                 if working {
@@ -791,6 +802,7 @@ private struct Composer: View {
                     .help("Stop the answer")
                 } else {
                     let empty = draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        && (manager.attachments[key] ?? []).isEmpty
                     Button(action: send) {
                         Image(systemName: "paperplane.fill").font(.system(size: 11))
                             .foregroundStyle(empty ? Color.secondary : .white)
@@ -806,15 +818,64 @@ private struct Composer: View {
         .padding(.horizontal, 12)
         .padding(.top, 10)
         .padding(.bottom, 8)
-        .background(Theme.card, in: RoundedRectangle(cornerRadius: 9))
-        .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(focused ? Theme.accent.opacity(0.55) : Theme.neutralLine,
-                                                                lineWidth: focused ? 1.2 : 1))
+        .background(dropping ? Theme.accentSoft : Theme.card, in: RoundedRectangle(cornerRadius: 9))
+        .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(focused || dropping ? Theme.accent.opacity(0.55) : Theme.neutralLine,
+                                                                lineWidth: focused || dropping ? 1.2 : 1))
         .contentShape(Rectangle())
         .onTapGesture { focused = true }
+        .onDrop(of: [.fileURL, .image], isTargeted: $dropping, perform: drop)
+        .help("Drop files or pictures here, or paste them with ⌘V")
         .padding(.horizontal, 16)
         .padding(.bottom, 14)
         .padding(.top, 6)
         .onChange(of: manager.focusRequest) { focused = true }
+        .onChange(of: focused) { manager.composerFocused = focused }
+        .onAppear { installPaste() }
+        .onDisappear {
+            if let pasteMonitor { NSEvent.removeMonitor(pasteMonitor) }
+            pasteMonitor = nil
+            manager.composerFocused = false
+        }
+    }
+
+    /// ⌘V or Control-V in the box with a picture or files on the pasteboard
+    /// adds them; with text, the paste goes on as usual.
+    private func installPaste() {
+        guard pasteMonitor == nil else { return }
+        let model = model
+        pasteMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.numericPad, .function])
+            guard model.manager.composerFocused, event.window?.isKeyWindow == true, event.keyCode == 9,
+                  mods == .command || mods == .control,
+                  let results = AttachmentLoader.fromPasteboard(.general) else { return event }
+            if let error = model.manager.attach(results, jobID: model.chatJob) { model.showError(error) }
+            return nil
+        }
+    }
+
+    private func drop(_ providers: [NSItemProvider]) -> Bool {
+        let jobID = model.chatJob
+        var handled = false
+        for provider in providers {
+            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                handled = true
+                _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                    guard let url else { return }
+                    Task { @MainActor in add([AttachmentLoader.load(url: url)], jobID: jobID) }
+                }
+            } else if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+                handled = true
+                provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
+                    guard let data else { return }
+                    Task { @MainActor in add([AttachmentLoader.load(imageData: data, name: "Dropped image")], jobID: jobID) }
+                }
+            }
+        }
+        return handled
+    }
+
+    private func add(_ results: [Result<Attachment, AttachmentLoader.Failure>], jobID: String?) {
+        if let error = model.manager.attach(results, jobID: jobID) { model.showError(error) }
     }
 
     private var placeholder: String {
@@ -826,5 +887,62 @@ private struct Composer: View {
         let text = model.manager.drafts[key] ?? ""
         model.manager.send(text, jobID: model.chatJob, model: model)
         focused = true
+    }
+}
+
+/// The files of a message: a thumbnail for a picture, a chip with the name
+/// for any other file. With `remove`, each has an x button (the composer).
+private struct FileStrip: View {
+    let files: [(name: String, path: String?, image: Bool)]
+    var data: [Data?] = []
+    var remove: ((Int) -> Void)?
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(Array(files.enumerated()), id: \.offset) { index, file in
+                    item(file, picture: picture(index, file))
+                        .overlay(alignment: .topTrailing) {
+                            if let remove {
+                                Button { remove(index) } label: {
+                                    Image(systemName: "xmark.circle.fill").font(.system(size: 13))
+                                        .foregroundStyle(.white, Color.black.opacity(0.6))
+                                }
+                                .buttonStyle(.plain)
+                                .offset(x: 5, y: -5)
+                                .help("Remove \(file.name)")
+                            }
+                        }
+                }
+            }
+            .padding(.top, remove == nil ? 0 : 6)
+            .padding(.trailing, 6)
+        }
+    }
+
+    private func picture(_ index: Int, _ file: (name: String, path: String?, image: Bool)) -> NSImage? {
+        guard file.image else { return nil }
+        if index < data.count, let bytes = data[index], let image = NSImage(data: bytes) { return image }
+        return file.path.flatMap { NSImage(contentsOfFile: $0) }
+    }
+
+    @ViewBuilder private func item(_ file: (name: String, path: String?, image: Bool), picture: NSImage?) -> some View {
+        if let picture {
+            Image(nsImage: picture).resizable().aspectRatio(contentMode: .fill)
+                .frame(width: 56, height: 56)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.line, lineWidth: 0.5))
+                .help(file.path ?? file.name)
+        } else {
+            HStack(spacing: 5) {
+                Image(systemName: file.image ? "photo" : "doc").font(.system(size: 11))
+                Text(file.name).font(.system(size: 11.5)).lineLimit(1).truncationMode(.middle)
+            }
+            .padding(.horizontal, 8).padding(.vertical, 5)
+            .frame(maxWidth: 220)
+            .background(Theme.field, in: RoundedRectangle(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.line, lineWidth: 0.5))
+            .help(file.path ?? file.name)
+        }
     }
 }

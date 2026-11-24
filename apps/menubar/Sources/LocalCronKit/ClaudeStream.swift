@@ -113,6 +113,12 @@ public final class ClaudeSession: @unchecked Sendable {
     /// Sends a message and waits until Claude has answered: the `result`
     /// line, which has the session id, the cost and whether it failed.
     public func send(_ text: String) async throws -> JSON {
+        try await send(content: [["type": "text", "text": .string(text)]])
+    }
+
+    /// The same with the message's content blocks: text and images
+    /// (`Attachments.content`).
+    public func send(content: JSON) async throws -> JSON {
         try await withCheckedThrowingContinuation { (done: CheckedContinuation<JSON, Error>) in
             lock.lock()
             if let closedReason {
@@ -127,7 +133,7 @@ public final class ClaudeSession: @unchecked Sendable {
             }
             turn = done
             lock.unlock()
-            send(["type": "user", "message": ["role": "user", "content": [["type": "text", "text": .string(text)]]]])
+            send(["type": "user", "message": ["role": "user", "content": content]])
         }
     }
 

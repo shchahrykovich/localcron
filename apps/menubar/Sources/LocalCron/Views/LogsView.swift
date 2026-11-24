@@ -255,6 +255,8 @@ struct RunLogView: View {
                             }
                             SmallButton("Run Again") { Task { await model.runNow(job) } }
                         }
+                        SmallButton("Open Chat") { model.showChat(jobID: run.jobId) }
+                            .help("Open the Chat page at the channel of \(run.jobId)")
                     }
                     RowDivider()
                     detail("Started by", RunText.startedBy(run, scheduleText: job?.scheduleText))

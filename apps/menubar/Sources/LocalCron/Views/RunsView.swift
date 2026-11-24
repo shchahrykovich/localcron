@@ -132,6 +132,7 @@ struct RunRow: View {
         .contextMenu {
             Button("Show Log") { model.showLog(run) }
             Button("Reveal Log in Finder") { model.revealLog(run) }
+            Button("Open Chat") { model.showChat(jobID: run.jobId) }
             if let job = model.job(run.jobId) {
                 Button("Run \(run.jobId) Again") { Task { await model.runNow(job) } }
                 if run.status.isFinished, job.job.kind == .claude, run.sessionId != nil {

@@ -338,6 +338,7 @@ struct WeekView: View {
                                     SmallButton("Run Now, Instead of This Run") { perform(.runEarly(job.id)) }
                                 }
                             }
+                            SmallButton("Open Chat") { model.showChat(jobID: mark.jobID) }
                         }
                     }
                 } else {

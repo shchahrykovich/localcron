@@ -109,6 +109,12 @@ public enum Updater {
         return nil
     }
 
+    /// The update that waits for the runs to end, once none is left: the
+    /// install restarts the daemon, which would stop them.
+    public static func installNow(waiting: Release?, activeRuns: [Run]) -> Release? {
+        activeRuns.isEmpty ? waiting : nil
+    }
+
     /// The script that swaps the app after this process quits.
     public static func installScript(dmg: URL, dest: URL, pid: Int32, team: String?, log: URL, uid: UInt32 = getuid()) -> String {
         func q(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }

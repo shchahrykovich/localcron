@@ -152,5 +152,14 @@ final class UpdateStopsRunsTests: XCTestCase {
         XCTAssertTrue(question.detail.contains("daily-deal-check.9"), question.detail)
         XCTAssertTrue(question.failed, "shown as a warning")
         XCTAssertEqual(Feedback.updateStopsRuns([runs[0]])?.title, "Stop 1 run and update?")
+        XCTAssertTrue(question.detail.contains("when they all finish"), "it offers to wait: \(question.detail)")
+    }
+
+    func testAWaitingUpdateInstallsOnlyWhenNoRunIsLeft() throws {
+        let release = try Updater.parse(Data(#"{"tag_name":"v9.0.0","assets":[{"name":"localcron-9.0.0.dmg","browser_download_url":"https://github.com/shchahrykovich/localcron/releases/download/v9.0.0/localcron-9.0.0.dmg"}]}"#.utf8))
+        let running = makeRun("write-next-weekly.3", .running, start: "2026-11-24T14:56:00Z")
+        XCTAssertNil(Updater.installNow(waiting: release, activeRuns: [running]), "a run goes on: it waits")
+        XCTAssertEqual(Updater.installNow(waiting: release, activeRuns: []), release, "the last run ended: install")
+        XCTAssertNil(Updater.installNow(waiting: nil, activeRuns: []), "nothing waits")
     }
 }

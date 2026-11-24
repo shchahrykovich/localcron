@@ -165,6 +165,16 @@ struct RailUpdate: View {
                 ProgressView().controlSize(.small)
                 Text("Installing").font(.system(size: 10)).foregroundStyle(.secondary)
             }
+        case let .waitingForRuns(release):
+            Button { Task { await model.installUpdate(release) } } label: {
+                VStack(spacing: 3) {
+                    Image(systemName: "hourglass").font(.system(size: 18)).foregroundStyle(Theme.accentFill)
+                    Text("Update").font(.system(size: 11, weight: .semibold))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("\(Instance.current.appName) \(release.version) installs when the runs finish. Click to choose again.")
         case .checking, .idle, .upToDate, .failed:
             EmptyView()
         }

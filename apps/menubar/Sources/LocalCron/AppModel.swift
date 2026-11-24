@@ -15,6 +15,8 @@ final class AppModel {
         case upToDate
         case available(Updater.Release)
         case downloading(Updater.Release)
+        /// Installs when no run is left (`installWhenRunsFinish`).
+        case waitingForRuns(Updater.Release)
         case failed(String)
     }
 
@@ -305,6 +307,7 @@ final class AppModel {
             now = Date()
             await refreshPlanned()
             await markMessagesSeen()
+            await installWhenRunsFinish()
         } catch {
             status = nil
             daemonProblem = error.localizedDescription
@@ -867,7 +870,10 @@ final class AppModel {
     // MARK: Updates
 
     func checkForUpdates(manual: Bool) async {
-        if case .downloading = update { return }
+        switch update {
+        case .downloading, .waitingForRuns: return
+        default: break
+        }
         if let reason = Updater.disabledReason(for: .current) {
             update = manual ? .failed(reason) : .idle
             return
@@ -886,11 +892,27 @@ final class AppModel {
     }
 
     /// While runs go on, it asks first: the update restarts the daemon,
-    /// which stops them.
-    func installUpdate(_ release: Updater.Release) async {
-        if let question = Feedback.updateStopsRuns(activeRuns),
-           !confirm(question.title, question.detail, button: "Stop Runs and Update") {
-            return
+    /// which stops them. The user can update now, update when the runs
+    /// finish, or not update.
+    func installUpdate(_ release: Updater.Release, ask: Bool = true) async {
+        if ask, let question = Feedback.updateStopsRuns(activeRuns) {
+            NSApp.activate()
+            let alert = NSAlert()
+            alert.messageText = question.title
+            alert.informativeText = question.detail
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Update When Runs Finish")
+            alert.addButton(withTitle: "Update Now").hasDestructiveAction = true
+            alert.addButton(withTitle: "Cancel")
+            switch alert.runModal() {
+            case .alertFirstButtonReturn:
+                update = .waitingForRuns(release)
+                return
+            case .alertSecondButtonReturn:
+                break
+            default:
+                return
+            }
         }
         if let obstacle = Updater.disabledReason(for: .current) ?? Updater.obstacle(appURL: Bundle.main.bundleURL) {
             update = .failed(obstacle)
@@ -906,6 +928,18 @@ final class AppModel {
         } catch {
             update = .failed(error.localizedDescription)
         }
+    }
+
+    /// A waiting update installs at the first refresh with no run left.
+    private func installWhenRunsFinish() async {
+        guard case let .waitingForRuns(waiting) = update,
+              let release = Updater.installNow(waiting: waiting, activeRuns: activeRuns) else { return }
+        await installUpdate(release, ask: false)
+    }
+
+    /// Stops waiting; the update stays available.
+    func stopWaitingForRuns() {
+        if case let .waitingForRuns(release) = update { update = .available(release) }
     }
 
     // MARK: Uninstall

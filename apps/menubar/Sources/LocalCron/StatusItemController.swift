@@ -239,7 +239,7 @@ final class StatusItemController: NSObject {
                 alert(.upToDate(version: model.version))
             case let .failed(why):
                 alert(.failed("Could not check for updates", why))
-            case .idle, .checking, .downloading:
+            case .idle, .checking, .downloading, .waitingForRuns:
                 break
             }
         }

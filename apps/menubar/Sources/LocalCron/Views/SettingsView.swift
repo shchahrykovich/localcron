@@ -486,6 +486,11 @@ private struct UpdatesPage: View {
                 ProgressView().controlSize(.small)
                 Text("Installing \(release.version)…").font(.caption)
             }
+        case let .waitingForRuns(release):
+            HStack(spacing: 6) {
+                Text("Installs \(release.version) when the runs finish").font(.caption).foregroundStyle(.secondary)
+                SmallButton("Don't Wait") { model.stopWaitingForRuns() }
+            }
         }
     }
 }

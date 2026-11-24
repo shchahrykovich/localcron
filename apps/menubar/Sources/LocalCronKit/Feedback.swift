@@ -87,7 +87,7 @@ public struct Feedback: Equatable, Sendable {
         let name = Instance.current.appName
         let list = runs.map { "• \($0.id) (\($0.status == .queued ? "waits to start" : "running"))" }.joined(separator: "\n")
         return Feedback(title: runs.count == 1 ? "Stop 1 run and update?" : "Stop \(runs.count) runs and update?",
-                        detail: "The update restarts \(name). These runs stop, and the work they did so far is lost:\n\(list)",
+                        detail: "The update restarts \(name). Updating now stops these runs, and the work they did so far is lost. \(name) can instead update when they all finish.\n\n\(list)",
                         failed: true)
     }
 

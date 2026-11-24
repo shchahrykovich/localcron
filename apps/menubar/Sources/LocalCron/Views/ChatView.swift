@@ -198,9 +198,14 @@ private struct Conversation: View {
                 Text(subtitle(job: job, groups: groups)).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer(minLength: 12)
+            if let job { runButtons(job) }
             SearchBox(prompt: "Search \(name)", text: $query, focused: $searching)
                 .frame(width: 230)
             Menu {
+                if let job {
+                    runMenu(job)
+                    Divider()
+                }
                 Button("New Conversation with the Manager") { model.manager.startOver(jobID: model.chatJob) }
                     .disabled(!talking)
                 Button(model.chatJob == nil ? "Remove Every Message from Jobs" : "Remove the Messages of \(name)") {
@@ -218,6 +223,46 @@ private struct Conversation: View {
         }
         .padding(.horizontal, 16)
         .frame(height: 52)
+    }
+
+    /// The buttons next to the search field: Open Terminal while the job
+    /// runs in a console, else Run Now and Run Now, Instead of its next time.
+    @ViewBuilder private func runButtons(_ job: JobView) -> some View {
+        if let active = job.activeRun {
+            if active.console != nil {
+                SmallButton("Open Terminal") { model.openTerminal(active) }
+                    .help("Its Claude Code console: watch it and type into it")
+            }
+        } else {
+            HStack(spacing: 6) {
+                if let next = ApiDate.parse(job.nextRun) {
+                    SmallButton("Run Now, Instead of \(Formatting.next(next, now: model.now))") {
+                        Task { await model.runNow(job, early: true) }
+                    }
+                    .help("This run takes the place of the next scheduled run; the schedule goes on after it")
+                }
+                SmallButton("Run Now") { Task { await model.runNow(job) } }
+                    .help("An extra run; the next scheduled run stays")
+            }
+            .fixedSize()
+        }
+    }
+
+    /// The same commands in the "…" menu, with Stop while the job runs.
+    @ViewBuilder private func runMenu(_ job: JobView) -> some View {
+        if let active = job.activeRun {
+            if active.console != nil {
+                Button("Open Terminal") { model.openTerminal(active) }
+            }
+            Button("Stop \(active.id)") { Task { await model.cancel(active) } }
+        } else {
+            Button("Run Now") { Task { await model.runNow(job) } }
+            if let next = ApiDate.parse(job.nextRun) {
+                Button("Run Now, Instead of \(Formatting.next(next, now: model.now))") {
+                    Task { await model.runNow(job, early: true) }
+                }
+            }
+        }
     }
 
     private func subtitle(job: JobView?, groups: [Chat.Group]) -> String {

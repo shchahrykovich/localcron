@@ -137,3 +137,20 @@ final class BundleLayoutTests: XCTestCase {
         XCTAssertEqual(Set(paths.map { $0.lowercased() }).count, paths.count, "\(paths)")
     }
 }
+
+final class UpdateStopsRunsTests: XCTestCase {
+    func testNoQuestionWhenNothingRuns() {
+        XCTAssertNil(Feedback.updateStopsRuns([]))
+    }
+
+    func testTheQuestionNamesEveryRunThatStops() throws {
+        let runs = [makeRun("write-next-weekly.3", .running, start: "2026-11-24T14:56:00Z"),
+                    makeRun("daily-deal-check.9", .queued, start: nil)]
+        let question = try XCTUnwrap(Feedback.updateStopsRuns(runs))
+        XCTAssertEqual(question.title, "Stop 2 runs and update?")
+        XCTAssertTrue(question.detail.contains("write-next-weekly.3"), question.detail)
+        XCTAssertTrue(question.detail.contains("daily-deal-check.9"), question.detail)
+        XCTAssertTrue(question.failed, "shown as a warning")
+        XCTAssertEqual(Feedback.updateStopsRuns([runs[0]])?.title, "Stop 1 run and update?")
+    }
+}

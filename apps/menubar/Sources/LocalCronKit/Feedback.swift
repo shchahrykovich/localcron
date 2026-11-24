@@ -79,6 +79,18 @@ public struct Feedback: Equatable, Sendable {
                         detail: "You have version \(current). \(name) restarts after the update. Running jobs are stopped.")
     }
 
+    /// The question before an update while runs go on: the update restarts
+    /// the daemon, which stops them, and their work is lost. Nil when
+    /// nothing runs or waits.
+    public static func updateStopsRuns(_ runs: [Run]) -> Feedback? {
+        guard !runs.isEmpty else { return nil }
+        let name = Instance.current.appName
+        let list = runs.map { "• \($0.id) (\($0.status == .queued ? "waits to start" : "running"))" }.joined(separator: "\n")
+        return Feedback(title: runs.count == 1 ? "Stop 1 run and update?" : "Stop \(runs.count) runs and update?",
+                        detail: "The update restarts \(name). These runs stop, and the work they did so far is lost:\n\(list)",
+                        failed: true)
+    }
+
     public static func failed(_ title: String, _ reason: String) -> Feedback {
         Feedback(title: title, detail: reason, failed: true)
     }

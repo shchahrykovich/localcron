@@ -885,7 +885,13 @@ final class AppModel {
         }
     }
 
+    /// While runs go on, it asks first: the update restarts the daemon,
+    /// which stops them.
     func installUpdate(_ release: Updater.Release) async {
+        if let question = Feedback.updateStopsRuns(activeRuns),
+           !confirm(question.title, question.detail, button: "Stop Runs and Update") {
+            return
+        }
         if let obstacle = Updater.disabledReason(for: .current) ?? Updater.obstacle(appURL: Bundle.main.bundleURL) {
             update = .failed(obstacle)
             return

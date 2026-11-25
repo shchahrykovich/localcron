@@ -519,11 +519,12 @@ final class AppModel {
         openAppWindow()
     }
 
-    /// Opens the editor of a job. `from` is the page to go back to when
-    /// the editor closes, for an edit started outside the Jobs page.
+    /// Opens the editor of a job on the Jobs page. `from` is the page to go
+    /// back to when the editor closes; without it, the page shown now.
     func edit(_ job: JobView, from: WindowPage? = nil) {
-        if let from, from != .jobs { windowPage = .jobs }
-        pageAfterEditor = from == .jobs ? nil : from
+        let route = EditorRoute(editorPage: WindowPage.jobs, current: windowPage, from: from)
+        pageAfterEditor = route.back
+        windowPage = route.show
         page = .editor(JobDraft(job: job.job))
     }
 

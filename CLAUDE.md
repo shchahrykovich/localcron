@@ -168,4 +168,8 @@ every example and fail on a method without one.
   DMG, `gh release create` on `shchahrykovich/localcron`. The updater accepts
   only https GitHub URLs, images `spctl` accepts, and the same Team ID.
   `.env.notarize` holds credentials; it is git-ignored.
+- After a successful release, `publish.sh` removes the debug builds to save
+  space: `target/debug`, the Swift `Debug` products and intermediates, and
+  `apps/menubar/.build/index-build`. Release builds stay.
+  `LC_KEEP_DEBUG=1` keeps them all.
 - Only `aarch64-apple-darwin` (Apple Silicon, macOS 14+).

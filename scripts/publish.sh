@@ -47,3 +47,19 @@ remote_size="$(curl -sfIL "$url" | awk 'tolower($1) == "content-length:" { n = $
 local_size="$(stat -f %z "$image")"
 [[ "$remote_size" == "$local_size" ]] || lr_die "uploaded size $remote_size differs from $local_size"
 lr_say "Published $url"
+
+# The release is out: remove debug builds to save space. Release builds
+# stay, so the next release builds faster. LC_KEEP_DEBUG=1 keeps them.
+if [[ "${LC_KEEP_DEBUG:-}" != "1" ]]; then
+    swift_build="$ROOT/apps/menubar/.build"
+    debug_dirs=(
+        "$ROOT/target/debug"
+        "$swift_build/out/Products/Debug"
+        "$swift_build/out/Intermediates.noindex/LocalCron.build/Debug"
+        "$swift_build/index-build"
+    )
+    # du fails on a folder that is not there; that must not fail the release.
+    freed="$(du -sch "${debug_dirs[@]}" 2>/dev/null | awk 'END { print $1 }' || true)"
+    rm -rf "${debug_dirs[@]}"
+    lr_say "Removed debug builds (${freed:-0B})"
+fi

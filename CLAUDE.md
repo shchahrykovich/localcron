@@ -48,8 +48,20 @@ LocalCron.app (Swift) ───────────────────�
   holds all state under one mutex. The scheduler thread sleeps on a condvar
   until the next due time, a run deadline, or a change, at most 60 s (so a
   wake from sleep is seen). Each run has a thread that waits for its process.
-  Every run starts in its own process group; cancel and timeout send SIGTERM
-  to the group, SIGKILL after 10 s. The daemon blocks SIGTERM in all threads
+  Every run starts in its own process group. `procs.rs` `Family` holds the
+  run's processes: the group, plus every process whose parent is a member,
+  kept by pid and start time, so a child that left the group (`setsid`)
+  stays known. Cancel and timeout send SIGTERM to the family, SIGKILL after
+  10 s; when the first process ends, `procs::sweep` stops what is left and
+  the run log names it. At start the daemon stops the groups of runs it lost
+  in a crash (`stop_orphans`). macOS 27 hides other processes' environment
+  (`KERN_PROCARGS2` has only the arguments), so a variable cannot mark a
+  run's processes. The run thread waits with `wait4` (`procs::wait`) for the
+  CPU time of the whole tree. `meter.rs`: a thread per run reads the family
+  every 2 s (`proc_pid_rusage`, times in mach ticks) and appends a
+  `core::metrics::Sample` per line to `<run>.metrics` beside the log; the
+  sums go to `Run.resources`, `get_run_metrics` returns the samples. The log
+  budget counts both files. The daemon blocks SIGTERM in all threads
   and waits for it with `sigwait`; `unblock_signals_in_child` clears the mask
   in children, or they could not be stopped. `shellenv.rs` gets PATH from the
   login shell. A missed time is caught up once, from the newest `due_at` in
@@ -141,6 +153,8 @@ LocalCron.app (Swift) ───────────────────�
   Calendar, Logs, Chat, Secrets, Settings at the bottom) at the page the
   user left (`WindowPage`, saved in UserDefaults) and at its saved frame.
   Its footer shows only errors (`actionError`): a success says nothing.
+  A run's log page has `ResourcesCard` (Swift Charts) above the output: four
+  tiles and the chart of the chosen one, texts from `LocalCronKit/RunMetrics.swift`.
 
 ### Changing the socket API
 

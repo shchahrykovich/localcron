@@ -199,6 +199,9 @@ public final class DaemonClient: Sendable {
     public func runLog(id: String, maxBytes: UInt64 = 256 * 1024) async throws -> GetRunLogResult {
         try await call("get_run_log", GetRunLogParams(runId: id, maxBytes: maxBytes))
     }
+    public func runMetrics(id: String, maxPoints: Int = 600) async throws -> GetRunMetricsResult {
+        try await call("get_run_metrics", GetRunMetricsParams(runId: id, maxPoints: maxPoints))
+    }
     public func preview(schedule: String, count: Int = 3) async throws -> PreviewScheduleResult {
         try await call("preview_schedule", PreviewScheduleParams(schedule: schedule, count: count))
     }

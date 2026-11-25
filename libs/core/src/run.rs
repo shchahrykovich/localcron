@@ -4,6 +4,7 @@
 use chrono::{DateTime, FixedOffset};
 use serde::{Deserialize, Serialize};
 
+use crate::metrics::Resources;
 use crate::usage::Usage;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,6 +91,10 @@ pub struct Run {
     /// that the work failed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reported: Option<Reported>,
+    /// What its processes used: CPU, memory, disk. Set when it ended; the
+    /// samples over time are in `get_run_metrics`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resources: Option<Resources>,
 }
 
 /// The environment variables that hold the id of the current run. The

@@ -193,6 +193,9 @@ struct RunLogView: View {
     let runID: String
     @State private var log: GetRunLogResult?
     @State private var error: String?
+    /// None from a daemon without `get_run_metrics`, or for a run from
+    /// before runs were sampled: then there is no card.
+    @State private var metrics: GetRunMetricsResult?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -277,6 +280,9 @@ struct RunLogView: View {
                     }
                 }
             }
+            if let metrics, metrics.run.id == run.id, metrics.run.resources != nil || !metrics.samples.isEmpty || !run.status.isFinished {
+                ResourcesCard(metrics: metrics)
+            }
             HStack {
                 Text("Output").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
                 Text(outputNote(log)).font(.system(size: 11)).foregroundStyle(.secondary)
@@ -324,5 +330,6 @@ struct RunLogView: View {
         case let .failure(e):
             error = e.localizedDescription
         }
+        metrics = await model.metrics(runID)
     }
 }

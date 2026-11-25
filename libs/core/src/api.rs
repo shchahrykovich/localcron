@@ -12,16 +12,17 @@ use serde_json::Value;
 
 use crate::job::{Job, SecretScope};
 use crate::message::Message;
+use crate::metrics::Sample;
 use crate::run::{ReportedStatus, Run};
 
 /// Major.minor. A client stops when the major number differs.
-pub const API_VERSION: &str = "1.6";
+pub const API_VERSION: &str = "1.7";
 
 pub fn api_major(version: &str) -> Option<u32> {
     version.split('.').next()?.parse().ok()
 }
 
-pub const METHODS: [&str; 23] = [
+pub const METHODS: [&str; 24] = [
     "hello",
     "status",
     "list_jobs",
@@ -33,6 +34,7 @@ pub const METHODS: [&str; 23] = [
     "cancel_run",
     "list_runs",
     "get_run_log",
+    "get_run_metrics",
     "preview_schedule",
     "get_config",
     "set_config",
@@ -301,6 +303,26 @@ pub struct GetRunLogResult {
     /// The file is longer than `text`: only its end is here.
     pub truncated: bool,
     pub size: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GetRunMetricsParams {
+    pub run_id: String,
+    /// At most this many samples: a longer run's samples are joined in
+    /// groups (`metrics::downsample`). Default 1000, at most 10000.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_points: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GetRunMetricsResult {
+    /// `run.resources` has the sums once the run ended.
+    pub run: Run,
+    /// Seconds between two samples, before any join.
+    pub interval_secs: f64,
+    /// Oldest first. Empty for a run shorter than one interval, or one from
+    /// before LocalCron sampled runs.
+    pub samples: Vec<Sample>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

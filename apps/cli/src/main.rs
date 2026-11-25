@@ -14,7 +14,7 @@ use anyhow::{Context, bail};
 use chrono::{DateTime, FixedOffset, Local};
 use clap::{Args, Parser, Subcommand};
 use localcron_core::api::{
-    CancelRunParams, Config, Empty, GetRunLogParams, GetRunLogResult, IdParams, JobResult, JobView, ListJobsResult, ListMessagesParams,
+    CancelRunParams, Config, Empty, GetRunLogParams, GetRunLogResult, GetRunMetricsParams, GetRunMetricsResult, IdParams, JobResult, JobView, ListJobsResult, ListMessagesParams,
     ListMessagesResult, ListRunsParams, ListRunsResult, ListSecretsResult, MessageResult, NameParams, PreviewScheduleParams,
     PreviewScheduleResult, RemoveSecretResult, RunJobParams, RunResult, SecretInfo, SecretState, SendMessageParams, SetConfigParams,
     SetJobEnabledParams, SetJobParams, SetJobResult, SetRunStatusParams, SetSecretParams, SetSecretResult, StatusResult,
@@ -93,6 +93,13 @@ enum Command {
         /// At most this many bytes from the end.
         #[arg(long)]
         bytes: Option<u64>,
+    },
+    /// What a run's processes used over time: CPU, memory, disk.
+    Metrics {
+        run_id: String,
+        /// At most this many rows: a long run's samples are joined.
+        #[arg(long, default_value_t = 60)]
+        rows: usize,
     },
     /// The next times of a schedule: localcron next "0 9 * * wed".
     Next {
@@ -433,6 +440,15 @@ fn run(cli: Cli, instance: &Instance, paths: &Paths) -> anyhow::Result<ExitCode>
                 print!("{}", log.text);
             }
         }
+        Command::Metrics { run_id, rows } => {
+            let v = call("get_run_metrics", serde_json::to_value(GetRunMetricsParams { run_id, max_points: Some(rows) })?)?;
+            if json {
+                show(&v)?;
+            } else {
+                let m: GetRunMetricsResult = serde_json::from_value(v)?;
+                print!("{}", metrics_table(&m));
+            }
+        }
         Command::Next { schedule, count } => {
             let v = call("preview_schedule", serde_json::to_value(PreviewScheduleParams { schedule, count: Some(count) })?)?;
             if json {
@@ -761,6 +777,34 @@ fn print_job(job: &JobView) {
     }
 }
 
+/// The sums, then one row per sample.
+fn metrics_table(m: &GetRunMetricsResult) -> String {
+    use localcron_core::metrics::{bytes, describe};
+    let mut out = String::new();
+    match &m.run.resources {
+        Some(r) => out += &format!("{}: {}\n", m.run.id, describe(r)),
+        None if m.run.status.is_finished() => out += &format!("{}: no measurements\n", m.run.id),
+        None => out += &format!("{}: {}\n", m.run.id, status_word(m.run.status)),
+    }
+    if m.samples.is_empty() {
+        return out;
+    }
+    out += &format!("{:>8} {:>7} {:>10} {:>10} {:>10} {:>6}\n", "time", "CPU", "memory", "read/s", "write/s", "procs");
+    for s in &m.samples {
+        let t = s.t.round() as u64;
+        out += &format!(
+            "{:>8} {:>6.0}% {:>10} {:>10} {:>10} {:>6}\n",
+            format!("{}:{:02}:{:02}", t / 3600, t / 60 % 60, t % 60),
+            s.cpu,
+            bytes(s.mem),
+            bytes(s.read as u64),
+            bytes(s.write as u64),
+            s.procs
+        );
+    }
+    out
+}
+
 fn print_run_line(run: &Run) {
     let started = run.started_at.as_ref().or(Some(&run.queued_at)).map(when).unwrap_or_default();
     let took = match (&run.started_at, &run.ended_at) {
@@ -781,6 +825,19 @@ fn print_run_line(run: &Run) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn metrics_are_a_summary_and_a_table() {
+        let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../api/examples/get_run_metrics.reply.json")).unwrap();
+        let v: Value = serde_json::from_str(&text).unwrap();
+        let m: GetRunMetricsResult = serde_json::from_value(v["result"].clone()).unwrap();
+        let table = metrics_table(&m);
+        let lines: Vec<&str> = table.lines().collect();
+        assert_eq!(lines[0], "backup.1: CPU 4.5 s (peak 100%), memory peak 1.7 MB, disk read 0 B, written 0 B, peak 1 processes");
+        assert_eq!(lines[1].split_whitespace().collect::<Vec<_>>(), ["time", "CPU", "memory", "read/s", "write/s", "procs"]);
+        assert_eq!(lines[2].split_whitespace().collect::<Vec<_>>(), ["0:00:02", "100%", "1.7", "MB", "0", "B", "0", "B", "1"]);
+        assert_eq!(lines.len(), 4);
+    }
 
     #[test]
     fn durations() {

@@ -61,6 +61,7 @@ A new job runs in the current folder; `--dir` changes it.
 | `{{CLI}} pause`, `{{CLI}} resume` | Stop or start every schedule |
 | `{{CLI}} runs [ID]` | Recent runs, newest first |
 | `{{CLI}} log RUN` | The output of a run |
+| `{{CLI}} metrics RUN` | What a run's processes used over time: CPU, memory, disk |
 | `{{CLI}} next "S"` | The next times of a schedule |
 | `{{CLI}} message "TEXT"` | From inside a run: a message to you, in the app's Chat |
 | `{{CLI}} report success\|error [--note TEXT]` | From inside a run: how its work went, apart from the exit code |
@@ -145,6 +146,19 @@ new value when this one expires or leaks.
 - A job never runs twice at once: a run that comes while one is queued or
   running is skipped.
 - A run stops after its timeout, 1 hour by default (`--timeout`).
+- A run ends when its first process ends. Every process it started that
+  still runs then is stopped: SIGTERM, then SIGKILL after 10 s. This also
+  finds a process that left the run's process group (`setsid`, a detached
+  Node child), when its parent was still alive at one of the looks every
+  2 s. The run log names what was stopped. To keep a server running after
+  a job, start it with launchd or `brew services`, not from the job.
+- Every 2 s {{APP}} reads what the run's processes use: CPU, memory
+  (as Activity Monitor's Memory column), disk read and written, and how
+  many processes there are. One look costs about 15 µs. The run log ends
+  with the sums; `{{CLI}} metrics RUN` shows them over time, and the app
+  draws them above the log. The CPU of a short process (a compiler that
+  runs 0.5 s) is counted through its parent; its disk and memory are only
+  counted when a look saw it alive.
 - A job that runs once (`@at`, `@in`) is removed after its run. The run and
   its log stay in `{{CLI}} runs` until their space is needed. A Run Now does
   not remove it.
@@ -251,7 +265,7 @@ claude job runs as before (`claude -p`): you see its output only at the end.
 
 ```
 ~/Library/Application Support/{{APP}}/   jobs.json, runs.json, config.json, secrets.json (no values), daemon.sock
-~/Library/Logs/{{APP}}/                  daemon.log, runs/<job>/<run>.log
+~/Library/Logs/{{APP}}/                  daemon.log, runs/<job>/<run>.log, runs/<job>/<run>.metrics (samples)
 ```
 
 ## When something is wrong

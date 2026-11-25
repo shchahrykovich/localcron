@@ -1,0 +1,8 @@
+{
+  "id": 1,
+  "method": "get_run_metrics",
+  "params": {
+    "run_id": "backup.1",
+    "max_points": 1000
+  }
+}

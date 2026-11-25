@@ -14,6 +14,7 @@ pub mod dotenv;
 pub mod instance;
 pub mod job;
 pub mod message;
+pub mod metrics;
 pub mod help;
 pub mod icon;
 pub mod note;

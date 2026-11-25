@@ -504,6 +504,11 @@ final class AppModel {
         }
     }
 
+    /// None when the daemon cannot give them: the card is left out.
+    func metrics(_ runID: String) async -> GetRunMetricsResult? {
+        try? await client.runMetrics(id: runID)
+    }
+
     func log(_ runID: String) async -> Result<GetRunLogResult, Error> {
         do {
             return .success(try await client.runLog(id: runID))

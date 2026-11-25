@@ -144,6 +144,13 @@ nobody there.
 - Output goes to a log file per run. Read it with `get_run_log`.
 - A `claude` or `codex` run in `list_runs` has `usage`: the tokens it used
   (new input, cache write, cache read, output) and its `session_id`.
+- A run ends with its first process. Every process it started that still
+  runs then is stopped (SIGTERM, SIGKILL after 10 s), also one that left
+  the process group; the log names them. A job must not start a server or
+  daemon that should outlive the run: use launchd or `brew services`.
+- A finished run in `list_runs` has `resources`: CPU seconds, peak CPU,
+  peak memory, disk read and written, peak process count. `{{CLI}} metrics
+  RUN` shows them over time, a sample every 2 s.
 - With tmux installed, a `claude` run works in a console the user can open
   and type into (`{{CLI}} attach JOB`, or `tmux -L {{CLI}}-JOB attach`
   without {{APP}}, or Open Terminal in the app). Its

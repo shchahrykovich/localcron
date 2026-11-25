@@ -6,7 +6,9 @@
 mod console;
 mod engine;
 mod lock;
+mod meter;
 mod peer;
+mod procs;
 mod secrets;
 mod shellenv;
 mod socket;

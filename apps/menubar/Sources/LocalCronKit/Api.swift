@@ -7,7 +7,7 @@
 
 import Foundation
 
-public let apiVersion = "1.6"
+public let apiVersion = "1.7"
 
 public func apiMajor(_ version: String) -> Int? {
     version.split(separator: ".").first.flatMap { Int($0) }
@@ -520,9 +520,11 @@ public struct Run: Codable, Equatable, Sendable, Identifiable {
     public var usage: TokenUsage?
     /// What the job said about its work, apart from the exit code.
     public var reported: Reported?
+    /// What its processes used, set when it ended.
+    public var resources: Resources?
 
     enum CodingKeys: String, CodingKey {
-        case id, trigger, status, pid, log, message, console, usage, reported
+        case id, trigger, status, pid, log, message, console, usage, reported, resources
         case jobId = "job_id"
         case sessionId = "session_id"
         case dueAt = "due_at"
@@ -536,8 +538,9 @@ public struct Run: Codable, Equatable, Sendable, Identifiable {
     public init(id: String, jobId: String, trigger: Trigger, status: RunStatus, dueAt: String? = nil, queuedAt: String,
                 startedAt: String? = nil, endedAt: String? = nil, exitCode: Int32? = nil, pid: UInt32? = nil,
                 log: String? = nil, logBytes: UInt64? = nil, message: String = "", console: String? = nil,
-                sessionId: String? = nil, usage: TokenUsage? = nil, reported: Reported? = nil) {
+                sessionId: String? = nil, usage: TokenUsage? = nil, reported: Reported? = nil, resources: Resources? = nil) {
         self.reported = reported
+        self.resources = resources
         self.sessionId = sessionId
         self.usage = usage
         self.id = id
@@ -575,6 +578,7 @@ public struct Run: Codable, Equatable, Sendable, Identifiable {
         message = try c.decodeIfPresent(String.self, forKey: .message) ?? ""
         console = try c.decodeIfPresent(String.self, forKey: .console)
         reported = try c.decodeIfPresent(Reported.self, forKey: .reported)
+        resources = try c.decodeIfPresent(Resources.self, forKey: .resources)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -596,6 +600,7 @@ public struct Run: Codable, Equatable, Sendable, Identifiable {
         try c.encodeIfPresent(sessionId, forKey: .sessionId)
         try c.encodeIfPresent(usage, forKey: .usage)
         try c.encodeIfPresent(reported, forKey: .reported)
+        try c.encodeIfPresent(resources, forKey: .resources)
     }
 
     /// The run went wrong: its process failed, or the job reported an error.
@@ -956,6 +961,92 @@ public struct GetRunLogResult: Codable, Equatable, Sendable {
     /// The file is longer than `text`: only its end is here.
     public var truncated: Bool
     public var size: UInt64
+}
+
+/// What the processes of a run used, summed over the whole run.
+public struct Resources: Codable, Equatable, Sendable {
+    /// CPU time of all its processes, user and system.
+    public var cpuSecs: Double
+    /// The highest sample, in percent of one core.
+    public var peakCpu: Double
+    /// Bytes, as Activity Monitor's Memory column, summed over the processes.
+    public var peakMem: UInt64
+    public var readBytes: UInt64
+    public var writtenBytes: UInt64
+    public var peakProcs: UInt32
+    public var samples: UInt32
+
+    enum CodingKeys: String, CodingKey {
+        case samples
+        case cpuSecs = "cpu_secs"
+        case peakCpu = "peak_cpu"
+        case peakMem = "peak_mem"
+        case readBytes = "read_bytes"
+        case writtenBytes = "written_bytes"
+        case peakProcs = "peak_procs"
+    }
+
+    public init(cpuSecs: Double = 0, peakCpu: Double = 0, peakMem: UInt64 = 0, readBytes: UInt64 = 0, writtenBytes: UInt64 = 0,
+                peakProcs: UInt32 = 0, samples: UInt32 = 0) {
+        self.cpuSecs = cpuSecs
+        self.peakCpu = peakCpu
+        self.peakMem = peakMem
+        self.readBytes = readBytes
+        self.writtenBytes = writtenBytes
+        self.peakProcs = peakProcs
+        self.samples = samples
+    }
+}
+
+/// The processes of a run at one moment.
+public struct MetricSample: Codable, Equatable, Sendable {
+    /// Seconds since the run started.
+    public var t: Double
+    /// Since the sample before, in percent of one core: 250 is 2.5 cores.
+    public var cpu: Double
+    /// Bytes.
+    public var mem: UInt64
+    /// Bytes per second.
+    public var read: Double
+    public var write: Double
+    public var procs: UInt32
+
+    public init(t: Double, cpu: Double = 0, mem: UInt64 = 0, read: Double = 0, write: Double = 0, procs: UInt32 = 0) {
+        self.t = t
+        self.cpu = cpu
+        self.mem = mem
+        self.read = read
+        self.write = write
+        self.procs = procs
+    }
+}
+
+public struct GetRunMetricsParams: Codable, Equatable, Sendable {
+    public var runId: String
+    public var maxPoints: Int?
+
+    public init(runId: String, maxPoints: Int? = nil) {
+        self.runId = runId
+        self.maxPoints = maxPoints
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case runId = "run_id"
+        case maxPoints = "max_points"
+    }
+}
+
+public struct GetRunMetricsResult: Codable, Equatable, Sendable {
+    public var run: Run
+    /// Seconds between two samples, before any join.
+    public var intervalSecs: Double
+    /// Oldest first.
+    public var samples: [MetricSample]
+
+    enum CodingKeys: String, CodingKey {
+        case run, samples
+        case intervalSecs = "interval_secs"
+    }
 }
 
 public struct PreviewScheduleParams: Codable, Equatable, Sendable {

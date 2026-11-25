@@ -99,6 +99,13 @@ impl Daemon {
         last
     }
 
+    /// Kill the daemon with SIGKILL, as a crash would end it.
+    fn crash(mut self) -> tempfile::TempDir {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        std::mem::replace(&mut self.home, tempfile::tempdir().unwrap())
+    }
+
     fn stop(mut self) -> tempfile::TempDir {
         unsafe { libc_kill(self.child.id() as i32, 15) };
         let _ = self.child.wait();
@@ -199,6 +206,108 @@ fn cancel_stops_the_whole_process_group() {
     assert_eq!(done["message"], "canceled");
     std::thread::sleep(Duration::from_millis(3500));
     assert!(!marker.exists(), "the child kept running after cancel");
+}
+
+fn pid_alive(pid: i32) -> bool {
+    // Signal 0 only checks; a zombie child of no one here is gone soon.
+    unsafe { libc_kill(pid, 0) == 0 }
+}
+
+/// The pid a job wrote to `name` in its folder.
+fn wait_pid_file(d: &Daemon, name: &str) -> i32 {
+    let path = d.home.path().join(name);
+    let mut pid = 0;
+    wait_for(
+        || {
+            pid = std::fs::read_to_string(&path).ok().and_then(|t| t.trim().parse().ok()).unwrap_or(0);
+            pid > 0
+        },
+        name,
+    );
+    pid
+}
+
+#[test]
+fn cancel_stops_a_child_that_left_the_process_group() {
+    let d = Daemon::start();
+    // perl leaves the group as a daemon does; a group signal misses it.
+    let command = "/usr/bin/perl -e 'setpgrp(0, 0); sleep 60' & echo $! > escaped.pid; wait";
+    d.ok("set_job", json!({"job": d.shell_job("escape", command)}));
+    let run = d.ok("run_job", json!({"id": "escape"}))["run"]["id"].as_str().unwrap().to_string();
+    let child = wait_pid_file(&d, "escaped.pid");
+    assert!(pid_alive(child));
+    d.ok("cancel_run", json!({"run_id": run}));
+    d.wait_status(&run, "canceled");
+    wait_for(|| !pid_alive(child), "the escaped child to stop");
+}
+
+#[test]
+fn a_process_still_running_when_the_run_ends_is_stopped_and_named_in_the_log() {
+    let d = Daemon::start();
+    d.ok("set_job", json!({"job": d.shell_job("leaves", "sleep 60 & echo $! > left.pid; echo done")}));
+    let run = d.ok("run_job", json!({"id": "leaves"}))["run"]["id"].as_str().unwrap().to_string();
+    let child = wait_pid_file(&d, "left.pid");
+    let done = d.wait_status(&run, "succeeded");
+    assert_eq!(done["exit_code"], 0);
+    assert!(!pid_alive(child), "sleep kept running after its run ended");
+    let log = d.ok("get_run_log", json!({"run_id": run}))["text"].as_str().unwrap().to_string();
+    assert!(log.contains(&format!("# 1 still running when the run ended, stopped: sleep ({child})")), "{log}");
+}
+
+#[test]
+fn a_run_records_the_cpu_memory_and_processes_it_used() {
+    let d = Daemon::start();
+    // About 2.5 s of CPU in a child of the shell, which the shell waits for.
+    let busy = "/usr/bin/perl -e '$t = time; 1 while time - $t < 3'";
+    d.ok("set_job", json!({"job": d.shell_job("busy", busy)}));
+    let run = d.ok("run_job", json!({"id": "busy"}))["run"]["id"].as_str().unwrap().to_string();
+    let done = d.wait_status(&run, "succeeded");
+    let r = &done["resources"];
+    let cpu = r["cpu_secs"].as_f64().unwrap();
+    assert!((1.5..10.0).contains(&cpu), "{done}");
+    assert!(r["peak_cpu"].as_f64().unwrap() > 50.0, "{done}");
+    assert!(r["peak_mem"].as_u64().unwrap() > 100_000, "{done}");
+    assert!(r["peak_procs"].as_u64().unwrap() >= 1, "{done}");
+    assert!(r["samples"].as_u64().unwrap() >= 1, "{done}");
+    let log = d.ok("get_run_log", json!({"run_id": run}))["text"].as_str().unwrap().to_string();
+    assert!(log.contains("# resources: CPU "), "{log}");
+    let samples = std::fs::read_to_string(d.home.path().join(format!("logs/runs/busy/{run}.metrics"))).unwrap();
+    assert!(samples.lines().count() >= 1, "{samples}");
+
+    let m = d.ok("get_run_metrics", json!({"run_id": run}));
+    assert_eq!(m["interval_secs"], 2.0);
+    assert_eq!(m["run"]["resources"], *r);
+    let list = m["samples"].as_array().unwrap();
+    assert_eq!(list.len(), samples.lines().count(), "{m}");
+    assert!(list.iter().any(|s| s["cpu"].as_f64().unwrap() > 50.0), "{m}");
+    let one = d.ok("get_run_metrics", json!({"run_id": run, "max_points": 1}));
+    assert_eq!(one["samples"].as_array().unwrap().len(), 1, "{one}");
+    assert!(d.call("get_run_metrics", json!({"run_id": "nope.1"})).is_err());
+}
+
+#[test]
+fn a_run_shorter_than_one_sample_still_has_its_cpu() {
+    let d = Daemon::start();
+    d.ok("set_job", json!({"job": d.shell_job("quick", "echo hi")}));
+    let run = d.ok("run_job", json!({"id": "quick"}))["run"]["id"].as_str().unwrap().to_string();
+    let done = d.wait_status(&run, "succeeded");
+    assert_eq!(done["resources"]["samples"], 0, "{done}");
+    assert!(done["resources"]["cpu_secs"].as_f64().unwrap() >= 0.0, "{done}");
+}
+
+#[test]
+fn processes_of_a_run_the_daemon_lost_are_stopped_when_it_starts_again() {
+    let d = Daemon::start();
+    d.ok("set_job", json!({"job": d.shell_job("lost", "echo $$ > lost.pid; sleep 60")}));
+    let run = d.ok("run_job", json!({"id": "lost"}))["run"]["id"].as_str().unwrap().to_string();
+    let shell = wait_pid_file(&d, "lost.pid");
+    wait_for(|| d.run(&run)["pid"].is_number(), "the pid");
+    // A crash: no shutdown, the run's processes stay.
+    let home = d.crash();
+    assert!(pid_alive(shell));
+    let d = Daemon::start_in(home);
+    assert_eq!(d.run(&run)["status"], "failed");
+    wait_for(|| !pid_alive(shell), "the lost run's shell to stop");
 }
 
 #[test]
@@ -358,8 +467,14 @@ fn the_oldest_logs_go_when_the_logs_use_more_than_the_budget() {
     let runs = d.ok("list_runs", json!({"job_id": "many"}))["runs"].clone();
     let kept: Vec<&str> = runs.as_array().unwrap().iter().map(|r| r["id"].as_str().unwrap()).collect();
     assert_eq!(kept, [ids[3].as_str(), ids[2].as_str()]);
-    let logs = std::fs::read_dir(d.home.path().join("logs/runs/many")).unwrap().count();
-    assert_eq!(logs, 2);
+    // Each run has its log and its samples; both go with the run.
+    let mut files: Vec<String> =
+        std::fs::read_dir(d.home.path().join("logs/runs/many")).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    files.sort();
+    let want = |id: &str| [format!("{id}.log"), format!("{id}.metrics")];
+    let mut expected: Vec<String> = want(&ids[2]).into_iter().chain(want(&ids[3])).collect();
+    expected.sort();
+    assert_eq!(files, expected);
 
     let usage = d.ok("status", json!({}))["logs"].clone();
     assert_eq!(usage["files"], 2, "{usage}");

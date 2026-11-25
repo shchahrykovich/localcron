@@ -6,7 +6,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::Arc;
 
 use localcron_core::api::{
-    self, AllowJobSecretsParams, ApiError, CancelRunParams, ErrorCode, GetRunLogParams, HelloParams, HelloResult, IdParams, JobResult,
+    self, AllowJobSecretsParams, ApiError, CancelRunParams, ErrorCode, GetRunLogParams, GetRunMetricsParams, HelloParams, HelloResult, IdParams, JobResult,
     ListMessagesParams, ListRunsParams, MessageIdsParams, MessageResult, NameParams, PreviewScheduleParams, Request, Response, RunJobParams,
     RunResult, SendMessageParams, SetConfigParams, SetJobEnabledParams, SetJobParams, SetRunStatusParams, SetSecretParams,
 };
@@ -114,6 +114,7 @@ pub fn dispatch(engine: &Engine, request: Request, trust: &Trust) -> Result<Valu
         }
         "list_runs" => to_value(engine.list_runs(params::<ListRunsParams>(p)?)),
         "get_run_log" => to_value(engine.get_run_log(params::<GetRunLogParams>(p)?)?),
+        "get_run_metrics" => to_value(engine.get_run_metrics(params::<GetRunMetricsParams>(p)?)?),
         "preview_schedule" => to_value(engine.preview_schedule(params::<PreviewScheduleParams>(p)?)?),
         "get_config" => to_value(engine.get_config()),
         "set_config" => to_value(engine.set_config(params::<SetConfigParams>(p)?)?),

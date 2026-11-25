@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 
 use chrono::{DateTime, FixedOffset, Local, Timelike};
 use localcron_core::api::{
-    self, AllowJobSecretsParams, ApiError, CancelRunResult, Config, ErrorCode, GetRunLogParams, GetRunLogResult, JobView, ListJobsResult, ListRunsParams,
+    self, AllowJobSecretsParams, ApiError, CancelRunResult, Config, ErrorCode, GetRunLogParams, GetRunLogResult, GetRunMetricsParams, GetRunMetricsResult, JobView, ListJobsResult, ListRunsParams,
     ListRunsResult, ListSecretsResult, MissingSecret, NextRun, PastApproval, PreviewScheduleParams, PreviewScheduleResult, RemoveJobResult,
     ListMessagesParams, ListMessagesResult, MessageIdsParams, MessagesChangedResult, RemoveSecretResult, RunJobParams, SecretInfo, SecretState,
     SendMessageParams, SetConfigParams, SetJobParams, SetJobResult, SetRunStatusParams, SetSecretParams, SetSecretResult, StatusResult,
@@ -30,13 +30,16 @@ use localcron_core::icon;
 use localcron_core::instance::Instance;
 use localcron_core::job::{Job, JobKind, SecretScope};
 use localcron_core::message::{self, Message};
+use localcron_core::metrics::{self, Resources};
 use localcron_core::paths::Paths;
 use localcron_core::run::{self as run_ids, Reported, Run, RunStatus, Trigger};
 use localcron_core::schedule::{self, Schedule};
 use localcron_core::secret;
 
 use crate::console::{self, Console, Pane, Turn};
+use crate::procs::{self, Family};
 use crate::log;
+use crate::meter::Sampler;
 use crate::peer::{AppCheck, Trust};
 use crate::secrets::{Keychain, ReadError};
 use crate::shellenv::ShellEnvCache;
@@ -85,6 +88,8 @@ struct Slot {
 
 struct Active {
     pid: Option<u32>,
+    /// The run's processes, once its first one started.
+    family: Option<Arc<Mutex<Family>>>,
     deadline: Instant,
     /// Set when the run is being stopped: why, and when SIGTERM was sent.
     stop: Option<(RunStatus, Option<Instant>)>,
@@ -139,7 +144,11 @@ impl Engine {
 
         let started = now();
         let mut lost = 0;
+        let mut orphans = Vec::new();
         for run in runs_file.runs.iter_mut().filter(|r| !r.status.is_finished()) {
+            if let (Some(pid), Some(at)) = (run.pid, run.started_at) {
+                orphans.push((run.id.clone(), pid as i32, at));
+            }
             run.status = RunStatus::Failed;
             run.ended_at.get_or_insert(started);
             run.message = "LocalCron stopped during this run".into();
@@ -147,6 +156,9 @@ impl Engine {
         }
         if lost > 0 {
             log!("{lost} runs were unfinished when the daemon stopped");
+        }
+        if !orphans.is_empty() {
+            let _ = std::thread::Builder::new().name("orphans".into()).spawn(move || stop_orphans(&orphans));
         }
         // Runs from before the log budget have no size yet.
         let mut measured = 0;
@@ -284,16 +296,16 @@ impl Engine {
                 _ => {}
             }
             if let Some((_, sent)) = active.stop {
-                match (sent, active.pid) {
-                    (None, Some(pid)) => {
-                        signal_group(pid, libc::SIGTERM);
+                match (sent, &active.family) {
+                    (None, Some(family)) => {
+                        lock_family(family).signal(libc::SIGTERM);
                         active.stop = active.stop.map(|(s, _)| (s, Some(now_i)));
                         wait = wait.min(KILL_GRACE);
                     }
-                    (Some(at), Some(pid)) if !active.killed => {
+                    (Some(at), Some(family)) if !active.killed => {
                         let left = (at + KILL_GRACE).saturating_duration_since(now_i);
                         if left.is_zero() {
-                            signal_group(pid, libc::SIGKILL);
+                            lock_family(family).signal(libc::SIGKILL);
                             active.killed = true;
                         } else {
                             wait = wait.min(left);
@@ -335,6 +347,7 @@ impl Engine {
             session_id: None,
             usage: None,
             reported: None,
+            resources: None,
         };
         if let Some(busy) = st.runs.iter().find(|r| r.job_id == job_id && !r.status.is_finished()) {
             run.status = RunStatus::Skipped;
@@ -369,7 +382,7 @@ impl Engine {
         }
         st.running.insert(
             run_id.to_string(),
-            Active { pid: None, deadline: Instant::now() + Duration::from_secs(job.timeout_secs), stop: None, killed: false },
+            Active { pid: None, family: None, deadline: Instant::now() + Duration::from_secs(job.timeout_secs), stop: None, killed: false },
         );
         self.save_runs(st);
         let engine = Arc::clone(self);
@@ -448,7 +461,8 @@ impl Engine {
             // Its own process group: a stop reaches every process it starts.
             .process_group(0);
         crate::unblock_signals_in_child(&mut command);
-        let mut child = match command.spawn() {
+        let spawned_at = Instant::now();
+        let child = match command.spawn() {
             Ok(child) => child,
             Err(e) => {
                 let why = if e.kind() == std::io::ErrorKind::NotFound {
@@ -460,10 +474,12 @@ impl Engine {
             }
         };
         let pid = child.id();
+        let family = Arc::new(Mutex::new(Family::new(pid as i32)));
         {
             let mut st = self.lock();
             if let Some(active) = st.running.get_mut(run_id) {
                 active.pid = Some(pid);
+                active.family = Some(Arc::clone(&family));
             }
             if let Some(run) = st.runs.iter_mut().find(|r| r.id == run_id) {
                 run.pid = Some(pid);
@@ -473,7 +489,11 @@ impl Engine {
         }
         // A stop that came before the pid was known.
         self.notify();
-        let status = child.wait();
+        let sampler = Sampler::start(run_id, &family, &metrics::file_for(log_path), spawned_at);
+        let status = procs::wait(pid as i32);
+        let resources = sampler.and_then(|s| s.finish(status.as_ref().ok().map(|(_, ns)| *ns)));
+        self.end_processes(run_id, &family, &mut file, resources);
+        let status = status.map(|(s, _)| s);
         if let Err(e) = scrub_file(log_path, &values) {
             log!("run {run_id}: cannot hide the secrets in its log: {e}");
         }
@@ -568,16 +588,19 @@ impl Engine {
         let mut env = run_env.to_vec();
         env.push(("LOCALCRON_EVENTS".into(), events.clone().into()));
         let session = job.names_its_session().then(usage::new_session_id);
+        let started_at = Instant::now();
         if let Err(e) = console.start(&job.console_argv(session.as_deref()), &job.dir, &env) {
             let _ = writeln!(file, "# no console: {e}\n");
             return None;
         }
         let attach = console.attach_command();
         let pid = console.pid();
+        let family = pid.map(|p| Arc::new(Mutex::new(Family::new(p as i32))));
         {
             let mut st = self.lock();
             if let Some(active) = st.running.get_mut(run_id) {
                 active.pid = pid;
+                active.family = family.clone();
             }
             if let Some(run) = st.runs.iter_mut().find(|r| r.id == run_id) {
                 run.pid = pid;
@@ -588,8 +611,9 @@ impl Engine {
         }
         // A stop that came before the pid was known.
         self.notify();
+        // claude is a child of the tmux server, not of the daemon: no wait4.
+        let sampler = family.as_ref().and_then(|f| Sampler::start(run_id, f, &metrics::file_for(log_path), started_at));
         let _ = writeln!(file, "# in a console; open it with: {attach}\n");
-        let started_at = Instant::now();
         let grace = console::grace();
         // The turns already written about in the run log.
         let mut told = 0;
@@ -634,10 +658,15 @@ impl Engine {
                 Pane::Alive => {}
             }
         };
+        let resources = sampler.and_then(|s| s.finish(None));
         let screen = console.screen();
         console.close();
         let _ = fs::remove_file(&events);
         let _ = writeln!(file, "# the console at the end:\n{screen}\n");
+        // Also when the run goes on without a console: nothing of this try may stay.
+        if let Some(family) = &family {
+            self.end_processes(run_id, family, file, resources.filter(|_| result.is_some()));
+        }
         if result.is_none() {
             let _ = writeln!(
                 file,
@@ -651,6 +680,22 @@ impl Engine {
         }
         self.save_runs(&st);
         result
+    }
+
+    /// After the run's first process ended: stop what it left running (see
+    /// procs.rs), say so in the run log, and keep what its processes used.
+    fn end_processes(&self, run_id: &str, family: &Mutex<Family>, file: &mut File, resources: Option<Resources>) {
+        let left = procs::sweep(family, KILL_GRACE);
+        if !left.is_empty() {
+            let _ = writeln!(file, "\n# {} still running when the run ended, stopped: {}", left.len(), left.join(", "));
+            log!("run {run_id}: stopped {} processes it left: {}", left.len(), left.join(", "));
+        }
+        if resources.is_some() {
+            let mut st = self.lock();
+            if let Some(run) = st.runs.iter_mut().find(|r| r.id == run_id) {
+                run.resources = resources;
+            }
+        }
     }
 
     /// The values of the job's `secret_env`, read from the Keychain without
@@ -708,8 +753,9 @@ impl Engine {
         let reported = run.reported.as_ref().map_or(String::new(), |r| {
             format!("\n# the job reported {}{}", r.status.word(), if r.note.is_empty() { String::new() } else { format!(": {}", r.note) })
         });
+        let resources = run.resources.as_ref().map_or(String::new(), |r| format!("\n# resources: {}", metrics::describe(r)));
         let footer = format!(
-            "\n# {} {:?} exit code {} {}{reported}\n",
+            "\n# {} {:?} exit code {} {}{reported}{resources}\n",
             now().to_rfc3339(),
             run.status,
             code.map_or("none".into(), |c| c.to_string()),
@@ -720,7 +766,7 @@ impl Engine {
         {
             let _ = file.write_all(footer.as_bytes());
         }
-        run.log_bytes = run.log.as_deref().map(file_size);
+        run.log_bytes = run.log.as_deref().map(files_size);
         log!("run {run_id}: {:?} {}", run.status, run.message);
         let (job_id, trigger, queued_at) = (run.job_id.clone(), run.trigger, run.queued_at);
         if !st.jobs.contains_key(&job_id) {
@@ -774,6 +820,7 @@ impl Engine {
         for i in gone.into_iter().rev() {
             let run = st.runs.remove(i);
             if let Some(path) = run.log {
+                let _ = fs::remove_file(metrics::file_for(Path::new(&path)));
                 let _ = fs::remove_file(path);
             }
             if !st.runs.iter().any(|r| r.job_id == run.job_id) {
@@ -823,10 +870,10 @@ impl Engine {
         let mut st = self.lock();
         st.stopping = true;
         let at = now();
-        let running: Vec<(String, Option<u32>)> = st.running.iter().map(|(id, a)| (id.clone(), a.pid)).collect();
-        for (run_id, pid) in running {
-            if let Some(pid) = pid {
-                signal_group(pid, libc::SIGTERM);
+        let running: Vec<(String, Option<Arc<Mutex<Family>>>)> = st.running.iter().map(|(id, a)| (id.clone(), a.family.clone())).collect();
+        for (run_id, family) in running {
+            if let Some(family) = family {
+                lock_family(&family).signal(libc::SIGTERM);
             }
             if let Some(run) = st.runs.iter_mut().find(|r| r.id == run_id) {
                 run.status = RunStatus::Canceled;
@@ -1130,6 +1177,24 @@ impl Engine {
         // The file is cleaned when the run ends; this covers a run in progress.
         let text = self.hide_secrets(&run.job_id, text);
         Ok(GetRunLogResult { truncated: size > text.len() as u64, run, text, size })
+    }
+
+    pub fn get_run_metrics(&self, params: GetRunMetricsParams) -> ApiResult<GetRunMetricsResult> {
+        let run = {
+            let st = self.lock();
+            st.runs.iter().find(|r| r.id == params.run_id).cloned()
+        }
+        .ok_or_else(|| ApiError::new(ErrorCode::NotFound, format!("no run {:?}", params.run_id)))?;
+        let max = params.max_points.unwrap_or(metrics::DEFAULT_MAX_POINTS).clamp(1, metrics::MAX_POINTS);
+        let samples = match run.log.as_deref().map(|l| metrics::file_for(Path::new(l))) {
+            Some(path) => match fs::read_to_string(&path) {
+                Ok(text) => metrics::downsample(&metrics::parse(&text), max),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+                Err(e) => return Err(internal(format!("cannot read {}: {e}", path.display()))),
+            },
+            None => Vec::new(),
+        };
+        Ok(GetRunMetricsResult { run, interval_secs: metrics::INTERVAL_SECS, samples })
     }
 
     pub fn preview_schedule(&self, params: PreviewScheduleParams) -> ApiResult<PreviewScheduleResult> {
@@ -1438,6 +1503,35 @@ impl Engine {
     }
 }
 
+/// The processes that runs left when the daemon ended during them (a crash,
+/// SIGKILL): their process groups, SIGTERM, then SIGKILL. Only processes
+/// that started after their run did: a group id that is now another
+/// program's is left alone. Children that left the group are not known any
+/// more.
+fn stop_orphans(runs: &[(String, i32, DateTime<FixedOffset>)]) {
+    let of = |pgid: i32, since: &DateTime<FixedOffset>| -> Vec<i32> {
+        let since = (since.timestamp().max(0) as u64).saturating_sub(1) * 1_000_000;
+        procs::group(pgid).into_iter().filter(|p| procs::info(*p).is_some_and(|i| !i.zombie && i.started >= since)).collect()
+    };
+    let mut found = Vec::new();
+    for (run_id, pgid, since) in runs {
+        let pids = of(*pgid, since);
+        if !pids.is_empty() {
+            log!("run {run_id}: stopping {} processes it left when the daemon ended", pids.len());
+            pids.iter().for_each(|p| procs::signal(*p, libc::SIGTERM));
+            found.push((pgid, since));
+        }
+    }
+    let start = Instant::now();
+    while !found.is_empty() && start.elapsed() < KILL_GRACE {
+        std::thread::sleep(Duration::from_millis(100));
+        found.retain(|(pgid, since)| !of(**pgid, since).is_empty());
+    }
+    for (pgid, since) in found {
+        of(*pgid, since).iter().for_each(|p| procs::signal(*p, libc::SIGKILL));
+    }
+}
+
 /// The first due time after a start: the first time after the last run (or
 /// the last change), so a time missed while the daemon was stopped is caught
 /// up. Without catch_up, the first time from now.
@@ -1491,6 +1585,11 @@ fn file_size(path: &str) -> u64 {
     fs::metadata(path).map_or(0, |m| m.len())
 }
 
+/// The log and the samples of a run: the log budget counts both.
+fn files_size(log: &str) -> u64 {
+    file_size(log) + fs::metadata(metrics::file_for(Path::new(log))).map_or(0, |m| m.len())
+}
+
 fn unread(st: &State) -> usize {
     st.messages.iter().filter(|m| !m.read).count()
 }
@@ -1502,7 +1601,7 @@ fn log_usage(st: &State) -> api::LogUsage {
     let mut files = 0;
     for run in &st.runs {
         let Some(path) = run.log.as_deref() else { continue };
-        let bytes = if run.status.is_finished() { run.log_bytes.unwrap_or(0) } else { file_size(path) };
+        let bytes = if run.status.is_finished() { run.log_bytes.unwrap_or(0) } else { files_size(path) };
         files += 1;
         *by_job.entry(run.job_id.as_str()).or_default() += bytes;
     }
@@ -1516,6 +1615,10 @@ fn log_usage(st: &State) -> api::LogUsage {
     }
 }
 
+fn lock_family(family: &Mutex<Family>) -> MutexGuard<'_, Family> {
+    family.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 fn grace_over() -> Instant {
     let now = Instant::now();
     now.checked_sub(KILL_GRACE).unwrap_or(now)
@@ -1524,13 +1627,6 @@ fn grace_over() -> Instant {
 /// `weekly-review.12` belongs to `weekly-review`.
 fn run_job_id(run_id: &str) -> &str {
     run_id.rsplit_once('.').map_or(run_id, |(job, _)| job)
-}
-
-fn signal_group(pid: u32, signal: i32) {
-    // SAFETY: kill has no memory effects; a negative pid is the process group.
-    unsafe {
-        libc::kill(-(pid as i32), signal);
-    }
 }
 
 fn open_log(path: &Path) -> std::io::Result<File> {
